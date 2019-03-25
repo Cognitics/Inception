@@ -1,0 +1,16 @@
+{
+    "name": "CDB",
+    "references": [
+        "CoordinateSystems",
+        "CSJ2K",
+        "LibTiff"
+    ],
+    "optionalUnityReferences": [],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": []
+}

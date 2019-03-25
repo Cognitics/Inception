@@ -1,0 +1,1373 @@
+﻿
+using System;
+using System.IO;
+using System.Collections.Generic;
+using System.Text;
+
+namespace Cognitics.OpenFlight
+{
+    public enum RecordType : ushort
+    {
+        Invalid = 0,
+        Header = 1,
+        Group = 2,
+        Object = 4,
+        Face = 5,
+        PushLevel = 10,
+        PopLevel = 11,
+        DegreeOfFreedom = 14,
+        PushSubFace = 19,
+        PopSubFace = 20,
+        PushExtension = 21,
+        PopExtension = 22,
+        Continuation = 23,
+        Comment = 31,
+        ColorPalette = 32,
+        LongId = 33,
+        Matrix = 49,
+        Vector = 50,
+        MultiTexture = 52,
+        UvList = 53,
+        BinarySeparatingPlane = 55,
+        Replicate = 60,
+        InstanceReference = 61,
+        InstanceDefinition = 62,
+        ExternalReference = 63,
+        TexturePalette = 64,
+        VertexPalette = 67,
+        VertexWithColor = 68,
+        VertexWithColorNormal = 69,
+        VertexWithColorNormalUv = 70,
+        VertexWithColorUv = 71,
+        VertexList = 72,
+        LevelOfDetail = 73,
+        BoundingBox = 74,
+        RotateAboutEdge = 76,
+        Translate = 78,
+        Scale = 79,
+        RotateAboutPoint = 80,
+        RotateScaleToPoint = 81,
+        Put = 82,
+        EyePointTrackPlanePalette = 83,
+        Mesh = 84,
+        LocalVertexPool = 85,
+        MeshPrimitive = 86,
+        RoadSegment = 87,
+        RoadZone = 88,
+        MorphVertexList = 89,
+        LinkagePalette = 90,
+        Sound = 91,
+        RoadPath = 92,
+        SoundPalette = 93,
+        GeneralMatrix = 94,
+        Text = 95,
+        Switch = 96,
+        LineStylePalette = 97,
+        ClipRegion = 98,
+        Extension = 100,
+        LightSource = 101,
+        LightSourcePalette = 102,
+        BoundingSphere = 105,
+        BoundingCylinder = 106,
+        BoundingConvexHull = 107,
+        BoundingVolumeCenter = 108,
+        BoundingVolumeOrientation = 109,
+        LightPoint = 111,
+        TextureMappingPalette = 112,
+        MaterialPalette = 113,
+        NameTable = 114,
+        Cat = 115,
+        CatData = 116,
+        BoundingHistogram = 119,
+        PushAttribute = 122,
+        PopAttribute = 123,
+        Curve = 126,
+        RoadConstruction = 127,
+        LightPointAppearancePalette = 128,
+        LightPointAnimationPalette = 129,
+        IndexedLightPoint = 130,
+        LightPointSystem = 131,
+        IndexedString = 132,
+        ShaderPalette = 133,
+        //Extended*
+    }
+
+    public class FltReader : EndianBinaryReader
+    {
+        public static string GetString(byte[] bytes)
+        {
+            int offset = bytes.Length;
+            for (int i = 0; i < bytes.Length; i++)
+            {
+                if (bytes[i] == 0)
+                {
+                    // Found the terminator
+                    offset = i;
+                    break;
+                }
+            }
+
+            return Encoding.ASCII.GetString(bytes, 0, offset);
+        }
+
+        public long Position = 0;
+        public RecordType Opcode = RecordType.Invalid;
+        public ushort RecordLength = 0;
+        public bool Postpone = false;
+
+        public FltReader(Stream input) : base(input) { }
+
+        // Move the file pointer to the start of the next record
+        public bool Advance()
+        {
+            if (Postpone)
+                Postpone = false;
+            else
+                Position += RecordLength;
+
+            if (BaseStream.Length - Position < 4)
+                return false;
+            try
+            {
+                BaseStream.Seek(Position, SeekOrigin.Begin);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(string.Format("ERROR: {0}, seek failure", ex.ToString()));
+            }
+            return true;
+        }
+
+        public Record Process(Record parent, RecordType recordType, FltReader reader)
+        {
+            NextOpcode();
+            RecordLength = ReadUInt16Big();
+
+            return CreateRecord(parent, recordType, reader);
+        }
+
+        public RecordType NextOpcode(bool advance = true)
+        {
+            Position = BaseStream.Position;
+            Opcode = (RecordType)ReadUInt16Big();
+            if (!advance)
+            {
+                try
+                {
+                    BaseStream.Seek(Position, SeekOrigin.Begin);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(string.Format("ERROR: {0}, seek failure", ex.ToString()));
+                }
+            }
+            return Opcode;
+        }
+
+        public Record CreateRecord(Record parent, RecordType recordType, FltReader reader)
+        {
+            Record baseData = null;
+            if (recordType == RecordType.Header)
+            {
+                var data = new Header(parent, recordType, reader);
+                data.Parse();
+                data.Root.Header = data;
+                baseData = data;
+            }
+            else if (recordType == RecordType.Comment)
+            {
+                var data = new Comment(parent, recordType, reader);
+                data.Parse();
+                baseData = data;
+            }
+            //else if (recordType == RecordType.BoundingSphere)
+            //{
+            //    var data = new BoundingSphere(parent, recordType, reader);
+            //    data.Parse();
+            //    baseData = data;
+            //}
+            //else if (recordType == RecordType.BoundingBox)
+            //{
+            //    var data = new BoundingBox(parent, recordType, reader);
+            //    data.Parse();
+            //    baseData = data;
+            //}
+            //else if (recordType == RecordType.BoundingVolumeCenter)
+            //{
+            //    var data = new BoundingVolumeCenter(parent, recordType, reader);
+            //    data.Parse();
+            //    baseData = data;
+            //}
+            //else if (recordType == RecordType.BoundingVolumeOrientation)
+            //{
+            //    var data = new BoundingVolumeOrientation(parent, recordType, reader);
+            //    data.Parse();
+            //    baseData = data;
+            //}
+            //else if (recordType == RecordType.ColorPalette)
+            //{
+            //    var data = new ColorPalette(parent, recordType, reader);
+            //    if (data.Root.ColorPalette != null)
+            //        Console.WriteLine("ERROR: more than one color palette! not handled");
+            //    data.Root.ColorPalette = data;
+            //    data.Parse();
+            //    baseData = data;
+            //}
+            else if (recordType == RecordType.MaterialPalette)
+            {
+                var data = new MaterialPalette(parent, recordType, reader);
+                data.Root.MaterialPalettes.Add(data);
+                data.Parse();
+                baseData = data;
+            }
+            else if (recordType == RecordType.TexturePalette)
+            {
+                var data = new TexturePalette(parent, recordType, reader);
+                data.Root.TexturePalettes.Add(data);
+                data.Parse();
+                baseData = data;
+            }
+            else if (recordType == RecordType.VertexPalette)
+            {
+                var data = new VertexPalette(parent, recordType, reader);
+                if (data.Root.VertexPalette != null)
+                    Console.WriteLine("ERROR: more than one vertex palette! not handled");
+                data.Root.VertexPalette = data;
+                data.Parse();
+                baseData = data;
+            }
+            else if (recordType == RecordType.PushLevel)
+            {
+                var data = new PushLevel(parent, recordType, reader);
+                parent.Root.PushStack.Push(data);
+                data.Parse();
+                baseData = data;
+            }
+            else if (recordType == RecordType.PopLevel)
+            {
+                var data = new PopLevel(parent, recordType, reader);
+                data.Parse();
+                baseData = data;
+            }
+            //else if (recordType == RecordType.Matrix)
+            //{
+            //    var data = new Matrix(parent, recordType, reader);
+            //    data.Parse();
+            //    baseData = data;
+            //}
+            //else if (recordType == RecordType.GeneralMatrix)
+            //{
+            //    var data = new GeneralMatrix(parent, recordType, reader);
+            //    data.Parse();
+            //    baseData = data;
+            //}
+            else if (recordType == RecordType.Group)
+            {
+                var data = new Group(parent, recordType, reader);
+                data.Parse();
+                baseData = data;
+            }
+            //else if (recordType == RecordType.Mesh)
+            //{
+            //    var data = new Mesh(this);
+            //    data.Parse();
+            //    basedata = data;
+            //}
+            else if (recordType == RecordType.Face)
+            {
+                var data = new Face(parent, recordType, reader);
+                data.Parse();
+                baseData = data;
+            }
+            else if (recordType == RecordType.LevelOfDetail)
+            {
+                var data = new LevelOfDetail(parent, recordType, reader);
+                data.Parse();
+                baseData = data;
+            }
+            else if (recordType == RecordType.VertexList)
+            {
+                var data = new VertexList(parent, recordType, reader);
+                data.Parse();
+                baseData = data;
+            }
+            else if (recordType == RecordType.VertexWithColor)
+            {
+                var data = new VertexWithColor(parent, recordType, reader);
+                data.Parse();
+                baseData = data;
+            }
+            else if (recordType == RecordType.VertexWithColorNormal)
+            {
+                var data = new VertexWithColorNormal(parent, recordType, reader);
+                data.Parse();
+                baseData = data;
+            }
+            else if (recordType == RecordType.VertexWithColorNormalUv)
+            {
+                var data = new VertexWithColorNormalUv(parent, recordType, reader);
+                data.Parse();
+                baseData = data;
+            }
+            else if (recordType == RecordType.ExternalReference)
+            {
+                var data = new ExternalReference(parent, recordType, reader);
+                data.Parse();
+                baseData = data;
+            }
+
+            //Console.WriteLine("Record.Parse: recordType: " + recordType.ToString());
+
+            return baseData;
+        }
+    }
+
+    #region Records
+
+    [Serializable]
+    public abstract class Record
+    {
+        public FltReader Reader = null;
+        public FltDatabase Root = null;
+        public Record Parent = null;
+        public List<Record> Children = new List<Record>();
+        public RecordType RecordType = RecordType.Invalid;
+        //public bool Disable = false;
+
+        public Record(Record parent, RecordType recordType, FltReader reader)
+        {
+            Reader = reader;
+            Root = parent != null ? parent.Root : null;
+            Parent = parent;
+            if (Parent != null)
+                Parent.Children.Add(this);
+            RecordType = recordType;
+        }
+
+        public virtual void Parse() // base Parse is called by any record that has a potential hierarchy, including the flt database itself
+        {
+            while (Reader.Advance()) // make sure we're at the next record's start
+            {
+                // Peek
+                var nextRecordType = Reader.NextOpcode(false);
+
+                // Determine whether we need to return control to parent because a given record isn't meant to process the next record as a child (per the spec)
+                if (RecordType == RecordType.VertexPalette)
+                {
+                    if (nextRecordType != RecordType.VertexWithColor &&
+                        nextRecordType != RecordType.VertexWithColorNormal &&
+                        nextRecordType != RecordType.VertexWithColorNormalUv &&
+                        nextRecordType != RecordType.VertexWithColorUv)
+                    {
+                        Reader.Postpone = true;
+                        break;
+                    }
+                }
+                else if (RecordType == RecordType.Object || 
+                         RecordType == RecordType.Group || 
+                         RecordType == RecordType.LevelOfDetail)
+                         // || RecordType == RecordType.DegreeOfFreedom || RecordType == RecordType.Switch)
+                {
+                    if (nextRecordType != RecordType.PushLevel &&
+                        nextRecordType != RecordType.LongId &&
+                        nextRecordType != RecordType.Comment &&
+                        nextRecordType != RecordType.Matrix)
+                    {
+                        Reader.Postpone = true;
+                        break;
+                    }
+                }
+                else if (RecordType == RecordType.Face)
+                {
+                    if (nextRecordType != RecordType.PushLevel &&
+                        nextRecordType != RecordType.LongId &&
+                        nextRecordType != RecordType.MultiTexture &&
+                        nextRecordType != RecordType.Comment)
+                    {
+                        Reader.Postpone = true;
+                        break;
+                    }
+                }
+                else if (RecordType == RecordType.ExternalReference)
+                {
+                    if (nextRecordType != RecordType.Matrix)
+                    {
+                        Reader.Postpone = true;
+                        break;
+                    }
+                }
+
+                // Calculate the parent
+                Record parent = null;
+                if (nextRecordType == RecordType.PopLevel)
+                {
+                    PushLevel push = null;
+                    try
+                    {
+                        push = Root.PushStack.Pop();
+                    }
+                    catch
+                    {
+                        Console.WriteLine("ERROR: pop not paired with a prior push!");
+                        break;
+                    }
+                    parent = push;
+                }
+                else
+                {
+                    parent = this;
+                }
+
+                var record = Reader.Process(parent, nextRecordType, Reader);
+                if (record != null && record.RecordType == RecordType.PopLevel)
+                {
+                    if (RecordType != RecordType.PushLevel)
+                        Console.WriteLine("ERROR: push/pop mismatch");
+                    break;
+                }
+            }
+        }
+    }
+
+    public abstract class IdRecord : Record
+    {
+        public string idStr = null;
+
+        protected const int fixedIdLength = 8;
+
+        public IdRecord(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader)
+        {
+        }
+    }
+
+    public class FltDatabase : Record
+    {
+        public Header Header = null;
+        public ColorPalette ColorPalette = null;
+        public List<MaterialPalette> MaterialPalettes = new List<MaterialPalette>();
+        public List<TexturePalette> TexturePalettes = new List<TexturePalette>();
+        public VertexPalette VertexPalette = null;
+        public Stack<PushLevel> PushStack = new Stack<PushLevel>();
+        public string Path = null;
+
+        public FltDatabase(Record parent, RecordType recordType, FltReader reader, string path) : base(parent, recordType, reader)
+        {
+            Root = this;
+            Reader = reader;
+            RecordType = recordType;
+            Path = path;
+        }
+
+        public override void Parse()
+        {
+            base.Parse();
+
+            Reader.Close();
+        }
+    }
+
+    [Serializable]
+    public class Header : IdRecord
+    {
+        static bool skipUnusedFields = true; // if we don't use it (yet), skip it
+
+        public int formatRevisionLevel;
+        public int editRevisionLevel;
+        public string lastRevisionDateTime;
+        public short nextGroupNodeId;
+        public short nextLodNodeId;
+        public short nextObjectNodeId;
+        public short nextFaceNodeId;
+        public short unitMultiplier;
+        public VertexCoordinateUnits vertexCoordinateUnits;
+        public byte texWhite;
+        public Flags flags;
+        public ProjectionType projectionType;
+        public short nextDofNodeId;
+        public short vertexStorageType;
+        public DatabaseOrigin databaseOrigin;
+        public double southwestX;
+        public double southwestY;
+        public double deltaX;
+        public double deltaY;
+        public short nextSoundNodeId;
+        public short nextPathNodeId;
+        public short nextClipNodeId;
+        public short nextTextNodeId;
+        public short nextBspNodeId;
+        public short nextSwitchNodeId;
+        public double southwestLatitude;
+        public double southwestLongitude;
+        public double northeastLatitude;
+        public double northeastLongitude;
+        public double originLatitude;
+        public double originLongitude;
+        public double lambertUpperLatitude;
+        public double lambertLowerLongitude;
+        public short nextLightSourceNodeId;
+        public short nextLightPointNodeId;
+        public short nextRoadNodeId;
+        public short nextCatNodeId;
+        public EarthEllipsoidModel earthEllipsoidModel;
+        public short nextAdaptiveNodeId;
+        public short nextCurveNodeId;
+        public short utmZone;
+
+        public enum VertexCoordinateUnits
+        {
+            Meters = 0,
+            Kilometers = 1,
+            Feet = 4,
+            Inches = 5,
+            NauticalMiles = 8,
+        }
+
+        public enum Flags
+        {
+            SaveVertexNormals = 0,
+            PackedColorMode = 1,
+            CadViewMode = 2,
+        }
+
+        public enum ProjectionType
+        {
+            FlatEarth = 0,
+            Trapezoidal = 1,
+            RoundEarth = 2,
+            Lambert = 3,
+            Utm = 4,
+            Geodetic = 5,
+            Geocentric = 6,
+        }
+
+        public enum DatabaseOrigin
+        {
+            OpenFlight = 100,
+            DIG_1_OR_2 = 200,
+            ES_CT5A_OR_CT6 = 300,
+            PSP_DIG = 400,
+            GE_CIV_OR_CV_OR_PT2000 = 600,
+            ES_GDF = 700,
+        }
+
+        public enum EarthEllipsoidModel
+        {
+            UserDefined = -1,
+            WGS_1984 = 0,
+            WGS_1972 = 1,
+            Bessel = 2,
+            Clarke_1866 = 3,
+            NAD_1927 = 4,
+        }
+
+        public Header(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            idStr = FltReader.GetString(Reader.ReadBytes(fixedIdLength));
+            formatRevisionLevel = Reader.ReadInt32Big();
+            if (skipUnusedFields)
+                return;
+
+            editRevisionLevel = Reader.ReadInt32Big();
+            lastRevisionDateTime = FltReader.GetString(Reader.ReadBytes(32));
+            nextGroupNodeId = Reader.ReadInt16Big();
+            nextLodNodeId = Reader.ReadInt16Big();
+            nextObjectNodeId = Reader.ReadInt16Big();
+            nextFaceNodeId = Reader.ReadInt16Big();
+            unitMultiplier = Reader.ReadInt16Big();
+            vertexCoordinateUnits = (VertexCoordinateUnits)Reader.ReadByte();
+            texWhite = Reader.ReadByte();
+            flags = (Flags)Reader.ReadInt32Big();
+
+            Reader.ReadBytes(6 * sizeof(int));
+
+            projectionType = (ProjectionType)Reader.ReadInt32Big();
+
+            Reader.ReadBytes(7 * sizeof(int));
+
+            nextDofNodeId = Reader.ReadInt16Big();
+            vertexStorageType = Reader.ReadInt16Big();
+            databaseOrigin = (DatabaseOrigin)Reader.ReadInt32Big();
+            southwestX = Reader.ReadDoubleBig();
+            southwestY = Reader.ReadDoubleBig();
+            deltaX = Reader.ReadDoubleBig();
+            deltaY = Reader.ReadDoubleBig();
+            nextSoundNodeId = Reader.ReadInt16Big();
+            nextPathNodeId = Reader.ReadInt16Big();
+
+            Reader.ReadBytes(2 * sizeof(int));
+
+            nextClipNodeId = Reader.ReadInt16Big();
+            nextTextNodeId = Reader.ReadInt16Big();
+            nextBspNodeId = Reader.ReadInt16Big();
+            nextSwitchNodeId = Reader.ReadInt16Big();
+
+            Reader.ReadBytes(1 * sizeof(int));
+
+            southwestLatitude = Reader.ReadDoubleBig();
+            southwestLongitude = Reader.ReadDoubleBig();
+            northeastLatitude = Reader.ReadDoubleBig();
+            northeastLongitude = Reader.ReadDoubleBig();
+            originLatitude = Reader.ReadDoubleBig();
+            originLongitude = Reader.ReadDoubleBig();
+            lambertUpperLatitude = Reader.ReadDoubleBig();
+            lambertLowerLongitude = Reader.ReadDoubleBig();
+            nextLightSourceNodeId = Reader.ReadInt16Big();
+            nextLightPointNodeId = Reader.ReadInt16Big();
+            nextRoadNodeId = Reader.ReadInt16Big();
+            nextCatNodeId = Reader.ReadInt16Big();
+
+            Reader.ReadBytes(4 * sizeof(short));
+
+            earthEllipsoidModel = (EarthEllipsoidModel)Reader.ReadInt32Big();
+            nextAdaptiveNodeId = Reader.ReadInt16Big();
+            nextCurveNodeId = Reader.ReadInt16Big();
+            if (formatRevisionLevel < 1580)
+                return;
+
+            utmZone = Reader.ReadInt16Big();
+
+            //Reader.ReadBytes(6);
+
+            //double deltaZ = Reader.ReadDoubleBig();
+            //double radius = Reader.ReadDoubleBig();
+            //ushort nextMeshNodeId = (ushort)Reader.ReadInt16Big();
+            //ushort nextLightPointSystemId = (ushort)Reader.ReadInt16Big();
+
+            //if (formatRevisionLevel < 1580)
+            //    return;
+
+            //Reader.ReadBytes(1 * sizeof(int));
+
+            //double earthMajorAxis = Reader.ReadDoubleBig();
+            //double earthMinorAxis = Reader.ReadDoubleBig();
+        }
+    }
+
+    public class Comment : Record
+    {
+        public string commentStr = null;
+
+        public Comment(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            /*short length = */Reader.ReadInt16Big();
+
+            commentStr = FltReader.GetString(Reader.ReadBytes(Reader.RecordLength - 4));
+            //if (commentStr.StartsWith("DB:Switch name=\"Damage_State\""))
+            //    Parent.Disable = true;
+        }
+    }
+
+    public class BoundingSphere : Record
+    {
+        double radius = 0;
+
+        public BoundingSphere(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            Reader.ReadInt32Big();
+
+            radius = Reader.ReadDoubleBig();
+        }
+    }
+
+    public class BoundingBox : Record
+    {
+        double minX = 0;
+        double minY = 0;
+        double minZ = 0;
+        double maxX = 0;
+        double maxY = 0;
+        double maxZ = 0;
+
+        public BoundingBox(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            Reader.ReadInt32Big();
+
+            minX = Reader.ReadDoubleBig();
+            minY = Reader.ReadDoubleBig();
+            minZ = Reader.ReadDoubleBig();
+            maxX = Reader.ReadDoubleBig();
+            maxY = Reader.ReadDoubleBig();
+            maxZ = Reader.ReadDoubleBig();
+        }
+    }
+
+    public class BoundingVolumeCenter : Record
+    {
+        double x = 0;
+        double y = 0;
+        double z = 0;
+
+        public BoundingVolumeCenter(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            Reader.ReadInt32Big();
+
+            x = Reader.ReadDoubleBig();
+            y = Reader.ReadDoubleBig();
+            z = Reader.ReadDoubleBig();
+        }
+    }
+
+    public class BoundingVolumeOrientation : Record
+    {
+        double yaw = 0;
+        double pitch = 0;
+        double roll = 0;
+
+        public BoundingVolumeOrientation(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            Reader.ReadInt32Big();
+
+            yaw = Reader.ReadDoubleBig();
+            pitch = Reader.ReadDoubleBig();
+            roll = Reader.ReadDoubleBig();
+        }
+    }
+
+    public class ColorPalette : Record
+    {
+        public struct Color
+        {
+            public string name;
+            public byte[] argb;
+        }
+
+        public Color[] colors = new Color[1024];
+
+        public ColorPalette(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            Reader.ReadBytes(128);
+
+            for (int i = 0; i < 1024; i++)
+            {
+                colors[i].argb = new byte[4];
+                colors[i].argb[0] = Reader.ReadByte();
+                colors[i].argb[1] = Reader.ReadByte();
+                colors[i].argb[2] = Reader.ReadByte();
+                colors[i].argb[3] = Reader.ReadByte();
+            }
+
+            if (Reader.RecordLength > 4228)
+            {
+                int colorNameCount = Reader.ReadInt32Big();
+                for (int i = 0; i < colorNameCount; i++)
+                {
+                    short length = Reader.ReadInt16Big();
+
+                    Reader.ReadInt16Big();
+
+                    short index = Reader.ReadInt16Big();
+
+                    Reader.ReadInt16Big();
+
+                    if (index >= 0 && index < colors.Length && length > 8)
+                        colors[index].name = FltReader.GetString(Reader.ReadBytes(length - 8));
+                }
+            }
+        }
+    }
+
+    public class MaterialPalette : Record
+    {
+        public int materialIndex;
+        public string materialName = null;
+        public Flags flags;
+        public float[] ambient = new float[3]; // (r,g,b) 0.0-1.0
+        public float[] diffuse = new float[3];
+        public float[] specular = new float[3];
+        public float[] emissive = new float[3];
+        public float shininess; // 0.0-128.0
+        public float alpha; // (a) 0.0-1.0
+
+        public enum Flags
+        {
+            IsUsed = 0,
+            //Spare = 1-31
+        }
+
+        public MaterialPalette(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            materialIndex = Reader.ReadInt32Big();
+            materialName = FltReader.GetString(Reader.ReadBytes(12));
+            flags = (Flags)Reader.ReadInt32Big();
+            ambient[0] = Reader.ReadSingleBig();
+            ambient[1] = Reader.ReadSingleBig();
+            ambient[2] = Reader.ReadSingleBig();
+            diffuse[0] = Reader.ReadSingleBig();
+            diffuse[1] = Reader.ReadSingleBig();
+            diffuse[2] = Reader.ReadSingleBig();
+            specular[0] = Reader.ReadSingleBig();
+            specular[1] = Reader.ReadSingleBig();
+            specular[2] = Reader.ReadSingleBig();
+            emissive[0] = Reader.ReadSingleBig();
+            emissive[1] = Reader.ReadSingleBig();
+            emissive[2] = Reader.ReadSingleBig();
+            shininess = Reader.ReadSingleBig();
+            alpha = Reader.ReadSingleBig();
+
+            Reader.ReadInt32Big();
+        }
+    }
+
+    public class TexturePalette : Record
+    {
+        public string filename = null;
+        public int texturePatternIndex;
+        public int locationX;
+        public int locationY;
+
+        public TexturePalette(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            filename = FltReader.GetString(Reader.ReadBytes(200));
+            texturePatternIndex = Reader.ReadInt32Big();
+            locationX = Reader.ReadInt32Big();
+            locationY = Reader.ReadInt32Big();
+        }
+    }
+
+    public class VertexPalette : Record
+    {
+        public Dictionary<int, VertexWithColor> Dict = new Dictionary<int, VertexWithColor>();
+        public int Offset = 0;
+
+        public VertexPalette(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            int length = Reader.ReadInt32Big();
+
+            Offset = 8;
+
+            // Process vertices, etc.
+            base.Parse();
+        }
+    }
+
+    public class PushLevel : Record
+    {
+        public PushLevel(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            base.Parse();
+        }
+    }
+
+    public class PopLevel : Record
+    {
+        public PopLevel(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+        }
+    }
+
+    public class Matrix : Record
+    {
+        public float[,] matrix = new float[4, 4];
+
+        public Matrix(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            for (int i = 0; i < 4; i++)
+            {
+                for (int j = 0; j < 4; j++)
+                    matrix[i, j] = Reader.ReadSingleBig();
+            }
+        }
+    }
+
+    public class GeneralMatrix : Record
+    {
+        public float[,] matrix = new float[4,4];
+
+        public GeneralMatrix(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            for (int i = 0; i < 4; i++)
+            {
+                for (int j = 0; j < 4; j++)
+                    matrix[i, j] = Reader.ReadSingleBig();
+            }
+        }
+    }
+
+    public class Object : IdRecord
+    {
+        public Flags flags;
+        public short relativePriority;
+        public ushort transparency;
+        public short specialEffectId1;
+        public short specialEffectId2;
+        public short significance;
+
+        public enum Flags
+        {
+            NoDisplayDaylight = 0,
+            NoDisplayDusk = 1,
+            NoDisplayNight = 2,
+            NoIlluminate = 3,
+            FlatShader = 4,
+            ShadowObject = 5,
+            PreserveAtRuntime = 6,
+            //Spare = 7-31
+        }
+
+        public Object(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            idStr = FltReader.GetString(Reader.ReadBytes(fixedIdLength));
+            flags = (Flags)Reader.ReadInt32Big();
+            relativePriority = Reader.ReadInt16Big();
+            transparency = (ushort)Reader.ReadInt16Big();
+            specialEffectId1 = Reader.ReadInt16Big();
+            specialEffectId2 = Reader.ReadInt16Big();
+            significance = Reader.ReadInt16Big();
+
+            base.Parse();
+        }
+    }
+
+    public class Group : IdRecord
+    {
+        public short relativePriority;
+        public Flags flags;
+        public short specialEffectId1;
+        public short specialEffectId2;
+        public short significance;
+        public byte layerCode;
+        public int loopCount;
+        public float loopDurationInSeconds;
+        public float lastFrameDurationInSeconds;
+
+        public enum Flags
+        {
+            Reserved = 0,
+            ForwardAnimation = 1,
+            SwingAnimation = 2,
+            BoundingBoxFollows = 3,
+            FreezeBoundingBox = 4,
+            DefaultParent = 5,
+            BackwardAnimation = 6,
+            PreserveAtRuntime = 7,
+            //Spare = 8-31
+        }
+
+        public Group(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            idStr = FltReader.GetString(Reader.ReadBytes(fixedIdLength));
+            relativePriority = Reader.ReadInt16Big();
+
+            Reader.ReadInt16Big();
+
+            flags = (Flags)Reader.ReadInt32Big();
+            specialEffectId1 = Reader.ReadInt16Big();
+            specialEffectId2 = Reader.ReadInt16Big();
+            significance = Reader.ReadInt16Big();
+            layerCode = Reader.ReadByte();
+
+            Reader.ReadByte();
+            Reader.ReadInt32Big();
+
+            if (Root.Header.formatRevisionLevel < 1580)
+            {
+                base.Parse();
+                return;
+            }
+
+            loopCount = Reader.ReadInt32Big();
+            loopDurationInSeconds = Reader.ReadSingleBig();
+            lastFrameDurationInSeconds = Reader.ReadSingleBig();
+
+            base.Parse();
+        }
+    }
+
+    //public class Mesh : Record
+    //{
+    //    public Mesh(FltReader reader)
+    //    {
+    //    }
+    //}
+
+    public class Face : Record
+    {
+        public string idStr = null;
+        public int irColorCode;
+        public short relativePriority;
+        public DrawType drawType;
+        public bool textureWhite;
+        public ushort colorNameIndex;
+        public ushort alternateColorNameIndex;
+        public Template template;
+        public short detailTexturePatternIndex = -1;
+        public short texturePatternIndex = -1;
+        public short materialIndex = -1;
+        public short surfaceMaterialCode; // for DFAD
+        public short featureId; // for DFAD
+        public int irMaterialCode;
+        public ushort transparency;
+        public byte lodGenerationControl;
+        public byte lineStyleIndex;
+        public Flags flags;
+        public LightMode lightMode;
+        public uint packedColorPrimary; // only b,g,r used
+        public uint packedColorAlternate; // only b,g,r used
+        public short textureMappingIndex = -1;
+        public int primaryColorIndex = -1;
+        public int alternateColorIndex = -1;
+        public short shaderIndex = -1;
+
+        public enum DrawType
+        {
+            DrawSolidWithBackfaceCulling = 0,
+            DrawSolidNoBackfaceCulling = 1,
+            DrawWireframeAndClose = 2,
+            DrawWireframe = 3,
+            SurroundWithWireFrameInAlternateColor = 4,
+            OmnidirectionalLight = 8,
+            UnidirectionalLight = 9,
+            BidirectionalLight = 10,
+        }
+
+        public enum Template // billboard
+        {
+            FixedNoAlphaBlending = 0,
+            FixedAlphaBlending = 1,
+            AxialRotateWithAlphaBlending = 2,
+            PointRotateWithAlphaBlending = 4,
+        }
+
+        public enum Flags
+        {
+            Terrain = 0,
+            NoColor = 1,
+            NoAlternateColor = 2,
+            PackedColor = 3,
+            TerrainCultureCutout = 4, // footprint
+            HiddenNotDrawn = 5,
+            Roofline = 6,
+            //Spare = 7-31
+        }
+
+        public enum LightMode
+        {
+            UseFaceColorNotIlluminated = 0, // flat
+            UseVertexColorsNotIlluminated = 1, // Gouraud
+            UseFaceColorAndVertexNormals = 2, // lit
+            UseVertexColorsAndVertexNormals = 3, // lit Gouraud
+        }
+
+        public Face(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            idStr = FltReader.GetString(Reader.ReadBytes(8));
+            irColorCode = Reader.ReadInt32Big();
+            relativePriority = Reader.ReadInt16Big();
+            drawType = (DrawType)Reader.ReadByte();
+            if (drawType != DrawType.DrawSolidWithBackfaceCulling && drawType != DrawType.DrawSolidNoBackfaceCulling)
+                Console.WriteLine("Face: unsupported draw type " + drawType.ToString());
+            textureWhite = Reader.ReadBoolean();
+            if (textureWhite)
+                Console.WriteLine("Face: unsupported textureWhite");
+            colorNameIndex = (ushort)Reader.ReadInt16Big();
+            alternateColorNameIndex = (ushort)Reader.ReadInt16Big();
+
+            Reader.ReadByte();
+
+            template = (Template)Reader.ReadByte();
+            //if (template != Template.FixedNoAlphaBlending)
+            //    Console.WriteLine("Face: unsupported template " + template.ToString());
+            detailTexturePatternIndex = Reader.ReadInt16Big();
+            if (detailTexturePatternIndex != -1)
+                Console.WriteLine("Face: unsupported detail texture pattern index specified");
+            texturePatternIndex = Reader.ReadInt16Big();
+            if (texturePatternIndex == -1)
+                Console.WriteLine("Face: no texture pattern index specified");
+            materialIndex = Reader.ReadInt16Big();
+            //if (materialIndex == -1)
+            //    Console.WriteLine("Face: no material index specified");
+            surfaceMaterialCode = Reader.ReadInt16Big();
+            featureId = Reader.ReadInt16Big();
+            irMaterialCode = Reader.ReadInt32Big();
+            transparency = (ushort)Reader.ReadInt16Big();
+            if (transparency != 0)
+                Console.WriteLine("Face: unsupported transparency");
+            lodGenerationControl = Reader.ReadByte();
+            lineStyleIndex = Reader.ReadByte();
+            flags = (Flags)Reader.ReadInt32Big();
+            lightMode = (LightMode)Reader.ReadByte();
+            //if (lightMode != LightMode.UseVertexColorsNotIlluminated)
+            //    Console.WriteLine("Face: unsupported lightMode " + lightMode.ToString());
+
+            Reader.ReadBytes(7);
+
+            packedColorPrimary = (uint)Reader.ReadInt32Big();
+            packedColorAlternate = (uint)Reader.ReadInt32Big();
+            textureMappingIndex = Reader.ReadInt16Big();
+
+            Reader.ReadInt16Big();
+
+            primaryColorIndex = Reader.ReadInt32Big();
+            alternateColorIndex = Reader.ReadInt32Big();
+
+            Reader.ReadInt16Big();
+
+            if (Root.Header.formatRevisionLevel < 1600)
+            {
+                base.Parse();
+                return;
+            }
+
+            shaderIndex = Reader.ReadInt16Big();
+
+            base.Parse();
+        }
+    }
+
+    public class LevelOfDetail : IdRecord
+    {
+        public double switchInDistance;
+        public double switchOutDistance;
+        public short specialEffectId1;
+        public short specialEffectId2;
+        public Flags flags;
+        public double centerX, centerY, centerZ;
+        public double transitionRange;
+        public double significantSize;
+
+        public enum Flags
+        {
+            UsePreviousSlantRange = 0,
+            AdditiveLodsBelow = 1,
+            FreezeCenter = 2, // freeze center (don't recalculate)
+            //Spare = 3-31
+        }
+
+        public LevelOfDetail(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            idStr = FltReader.GetString(Reader.ReadBytes(fixedIdLength));
+
+            Reader.ReadInt32Big();
+
+            switchInDistance = Reader.ReadDoubleBig();
+            switchOutDistance = Reader.ReadDoubleBig();
+            specialEffectId1 = Reader.ReadInt16Big();
+            specialEffectId2 = Reader.ReadInt16Big();
+            flags = (Flags)Reader.ReadInt32Big();
+            centerX = Reader.ReadDoubleBig();
+            centerY = Reader.ReadDoubleBig();
+            centerZ = Reader.ReadDoubleBig();
+            transitionRange = Reader.ReadDoubleBig();
+
+            if (Root.Header.formatRevisionLevel < 1580)
+            {
+                base.Parse();
+                return;
+            }
+
+            significantSize = Reader.ReadDoubleBig();
+
+            base.Parse();
+        }
+    }
+
+    public class VertexList : Record
+    {
+        public List<int> offsets = new List<int>();
+
+        public VertexList(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            int count = (Reader.RecordLength - 4) / sizeof(int);
+            for (int i = 0; i < count; i++)
+                offsets.Add(Reader.ReadInt32Big());
+        }
+    }
+
+    public class VertexWithColor : Record
+    {
+        public ushort nameIndex;
+        public ushort flags;
+        public double x, y, z;
+        public int packedIndex;
+        public uint colorIndex;
+
+        public VertexWithColor(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            nameIndex = (ushort)Reader.ReadInt16Big();
+            flags = (ushort)Reader.ReadInt16Big();
+            x = Reader.ReadDoubleBig();
+            y = Reader.ReadDoubleBig();
+            z = Reader.ReadDoubleBig();
+            packedIndex = Reader.ReadInt32Big();
+            colorIndex = (uint)Reader.ReadInt32Big();
+
+            var vertexPalette = Root.VertexPalette;
+            if (vertexPalette.Offset == 7096)
+                Console.WriteLine("foo");
+            vertexPalette.Dict[vertexPalette.Offset] = this;
+            vertexPalette.Offset += Reader.RecordLength;
+        }
+    }
+
+    public class VertexWithColorNormal : VertexWithColor
+    {
+        public float i, j, k;
+
+        public VertexWithColorNormal(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            nameIndex = (ushort)Reader.ReadInt16Big();
+            flags = (ushort)Reader.ReadInt16Big();
+            x = Reader.ReadDoubleBig();
+            y = Reader.ReadDoubleBig();
+            z = Reader.ReadDoubleBig();
+            i = Reader.ReadSingleBig();
+            j = Reader.ReadSingleBig();
+            k = Reader.ReadSingleBig();
+            packedIndex = Reader.ReadInt32Big();
+            colorIndex = (uint)Reader.ReadInt32Big();
+
+            var vertexPalette = Root.VertexPalette;
+            if (vertexPalette.Offset == 7096)
+                Console.WriteLine("foo");
+            vertexPalette.Dict[vertexPalette.Offset] = this;
+            vertexPalette.Offset += Reader.RecordLength;
+        }
+    }
+
+    public class VertexWithColorUv : VertexWithColor
+    {
+        public float u, v;
+
+        public VertexWithColorUv(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            nameIndex = (ushort)Reader.ReadInt16Big();
+            flags = (ushort)Reader.ReadInt16Big();
+            x = Reader.ReadDoubleBig();
+            y = Reader.ReadDoubleBig();
+            z = Reader.ReadDoubleBig();
+            u = Reader.ReadSingleBig();
+            v = Reader.ReadSingleBig();
+            packedIndex = Reader.ReadInt32Big();
+            colorIndex = (uint)Reader.ReadInt32Big();
+
+            var vertexPalette = Root.VertexPalette;
+            if (vertexPalette.Offset == 7096)
+                Console.WriteLine("foo");
+            vertexPalette.Dict[vertexPalette.Offset] = this;
+            vertexPalette.Offset += Reader.RecordLength;
+        }
+    }
+
+    public class VertexWithColorNormalUv : VertexWithColorNormal
+    {
+        public float u, v;
+
+        public VertexWithColorNormalUv(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            nameIndex = (ushort)Reader.ReadInt16Big();
+            flags = (ushort)Reader.ReadInt16Big();
+            x = Reader.ReadDoubleBig();
+            y = Reader.ReadDoubleBig();
+            z = Reader.ReadDoubleBig();
+            i = Reader.ReadSingleBig();
+            j = Reader.ReadSingleBig();
+            k = Reader.ReadSingleBig();
+            u = Reader.ReadSingleBig();
+            v = Reader.ReadSingleBig();
+            packedIndex = Reader.ReadInt32Big();
+            colorIndex = (uint)Reader.ReadInt32Big();
+
+            var vertexPalette = Root.VertexPalette;
+            if (vertexPalette.Offset == 7096)
+                Console.WriteLine("foo");
+            vertexPalette.Dict[vertexPalette.Offset] = this;
+            vertexPalette.Offset += Reader.RecordLength;
+        }
+    }
+
+    public class ExternalReference : Record
+    {
+        public string path = null;
+        public Flags flags;
+        public short viewAsBoundingBox;
+
+        public enum Flags
+        {
+            ColorPaletteOverride = 0,
+            MaterialPaletteOverride = 1,
+            TextureAndTextureMappingPaletteOverride = 2,
+            LineStylePaletteOverride = 3,
+            SoundPaletteOverride = 4,
+            LightSourcePaletteOverride = 5,
+            LightPointPaletteOverride = 6,
+            ShaderPaletteOverride = 7,
+            //Spare = 8-31
+        }
+
+        public ExternalReference(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            path = FltReader.GetString(Reader.ReadBytes(200));
+
+            Reader.ReadInt32Big();
+
+            flags = (Flags)Reader.ReadInt32Big();
+            viewAsBoundingBox = Reader.ReadInt16Big();
+
+            Reader.ReadInt16Big();
+
+            var dbPath = Path.GetDirectoryName(Root.Path);
+            path = Path.Combine(dbPath, path);
+            if (File.Exists(path))
+            {
+                path = Path.GetFullPath(path);
+                //Console.WriteLine("ExternalReference Path: " + path);
+                Stream stream = File.OpenRead(path);
+                var reader = new FltReader(stream);
+                var fltDB = new FltDatabase(this, RecordType.Invalid, reader, path);
+                fltDB.Parse();
+            }
+
+            base.Parse();
+        }
+    }
+
+    #endregion
+}
