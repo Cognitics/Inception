@@ -1,27 +1,71 @@
 ﻿
+using Cognitics.UnityCDB;
 using UnityEngine;
-
+using UnityEngine.UI;
+using NetTopologySuite;
+using NetTopologySuite.Features;
 public class PointofInterest : MonoBehaviour
 {
-    
-    public void Seattle()
-    { 
-        Camera.main.transform.parent.position = new Vector3(-1138.788f, 77.921f, 653.2443f);
-        Camera.main.transform.parent.rotation = Quaternion.Euler(new Vector3(14.692f, 40.301f, 0f));
-    }
-    public void Portland()
+    public GameObject panel;
+    public Button buttonPrefab;
+    public GameObject contentPane;
+    public GameObject cdbButton;
+    private Database database;
+    private string filepath;
+    private string title = "Title";
+    private bool isFirstTimeLoaded = true;
+
+    private void Start()
     {
-        Camera.main.transform.parent.position = new Vector3(-1446.17f, 97.73677f, -2752.33f);
-        Camera.main.transform.parent.rotation = Quaternion.Euler(new Vector3(21.872f, 11.46f, 0f));
+        panel.SetActive(false);
     }
-    public void MtStHelens()
+
+    public void PanelController()
     {
-        Camera.main.transform.parent.position = new Vector3(-748.1101f, 35.3013f, -1167.421f);
-        Camera.main.transform.parent.rotation = Quaternion.Euler(new Vector3(5.714f, -159.471f, 0f));
+        panel.SetActive(!panel.activeSelf);
+        if (panel.activeSelf == false)
+            RemoveAllButtons();
+        if (panel.activeSelf == true)
+            LoadPoints();
+        
     }
-    public void MtHood()
+
+    private void LoadPoints()
     {
-        Camera.main.transform.parent.position = new Vector3(4.763175f, 61.95778f, -2935.065f);
-        Camera.main.transform.parent.rotation = Quaternion.Euler(new Vector3(9.131001f, -60.997f, 0f));
+        database = cdbButton.GetComponent<FilePanel_SelectCDB>().GetCDBDatabase();
+        if (database == null)
+            return;
+#if UNITY_ANDROID
+        filepath = UnityEngine.Application.persistentDataPath;
+#else
+        filepath = database.Path;
+#endif
+        database = cdbButton.GetComponent<FilePanel_SelectCDB>().GetCDBDatabase();
+        string databasename = database.name;
+        databasename = databasename.Replace('.', '_');
+        string name = filepath + "/" + databasename + "POI.shp";
+        var feats = Cognitics.CDB.Shapefile.ReadFeatures(name);
+        foreach(Feature f in feats)
+        {
+            GeoAPI.Geometries.Coordinate[] coords = f.Geometry.Coordinates;
+            var geoCoords = new Cognitics.CoordinateSystems.GeographicCoordinates();
+            geoCoords.Longitude = coords[0].X;
+            geoCoords.Latitude = coords[0].Y;
+            var cartCoords = geoCoords.TransformedWith(database.Projection);
+
+            var poi = buttonPrefab.GetComponent<POIButton>();
+            poi.locationPosition = new Vector3((float)cartCoords.X, (float)coords[0].Z, (float)cartCoords.Y);
+            poi.buttonText = f.Attributes[title].ToString();
+            Instantiate(buttonPrefab, contentPane.transform);
+        }
+        //for (int i = 0; i < 20; ++i)
+        //   Instantiate(buttonPrefab, contentPane.transform);
+        isFirstTimeLoaded = false;
+    }
+
+    public void RemoveAllButtons()
+    {
+        foreach (Transform child in contentPane.transform)
+            Destroy(child.gameObject);
     }
 }

@@ -39,6 +39,8 @@ namespace Cognitics.UnityCDB
 
         private DateTime lastDistanceTest = DateTime.MinValue;
 
+        Shader Shader;
+
         internal Database Database;
 
         public int RasterDimension => (CDBTile.LOD < 0) ? CDBTile.LOD.RasterDimension : CDBTile.LOD.RasterDimension / 2;
@@ -67,6 +69,7 @@ namespace Cognitics.UnityCDB
 
         void Start()
         {
+            Shader = Shader.Find("Cognitics/TerrainStandard");
             Initialize();
         }
 
@@ -188,7 +191,7 @@ namespace Cognitics.UnityCDB
             if (!IsApplied)
             {
                 Database.UpdateTerrain(GeographicBounds);
-                StartCoroutine(ApplyTerrain());
+                ApplyTerrain();
                 return;
             }
 
@@ -246,11 +249,7 @@ namespace Cognitics.UnityCDB
         {
             try
             {
-                cameraDistance = double.MaxValue;
-                if (children.Count > 0)
-                    cameraDistance = GetDistanceToNearestChild(Database.lastCameraPosition);
-                if (cameraDistance == double.MaxValue)
-                    cameraDistance = GetDistance(Database.lastCameraPosition);
+                cameraDistance = Database.DistanceForBounds(GeographicBounds);
             }
             catch (Exception e)
             {
@@ -331,38 +330,35 @@ namespace Cognitics.UnityCDB
             */
         }
 
-        private IEnumerator ApplyTerrain()
+        private void ApplyTerrain()
         {
             IsApplying = true;
 
+            var materials = new Material[0];
             if (pixelsByTile.Count > 0)
             {
-                var materials = new Material[pixelsByTile.Count];
+                materials = new Material[pixelsByTile.Count];
                 int matIndex = 0;
                 foreach (var cdbTile in pixelsByTile.Keys)
                 {
                     var pixels = pixelsByTile[cdbTile];
                     int textureDimension = (int)Math.Sqrt(pixels.Length);
-                    var texture = new Texture2D(textureDimension, textureDimension);
-
+                    var texture = new Texture2D(textureDimension, textureDimension, TextureFormat.RGBA32, false);
                     var data = texture.GetRawTextureData<Color32>();
-                    for (int i = 0, c = pixels.Length; i < c; ++i)
-                        data[i] = pixels[i];
-
+                    data.CopyFrom(pixels);
                     texture.wrapMode = TextureWrapMode.Clamp;
-                    materials[matIndex] = new Material(Shader.Find("Standard"));
+                    materials[matIndex] = new Material(Shader);
                     materials[matIndex].mainTexture = texture;
-                    yield return null;
                     texture.Apply(true, true);
 
                     ++matIndex;
                 }
-                GetComponent<MeshRenderer>().materials = materials;
             }
 
-            yield return null;
-
+            var meshRenderer = GetComponent<MeshRenderer>();
             var meshFilter = GetComponent<MeshFilter>();
+
+            meshRenderer.materials = materials;
             //Destroy(meshFilter.mesh);
             //meshFilter.mesh = new Mesh();
             var mesh = meshFilter.mesh;
@@ -378,8 +374,6 @@ namespace Cognitics.UnityCDB
                 mesh.SetTriangles(subtriangles, materialIndex);
                 ++materialIndex;
             }
-
-            yield return null;
 
             mesh.RecalculateNormals();
             //mesh.UploadMeshData(true);
@@ -436,8 +430,8 @@ namespace Cognitics.UnityCDB
 
         public void Consolidate()
         {
-            Debug.LogFormat("[TILE] CONSOLIDATE {0} ({1} > {2})", name, cameraDistance, Database.LODBrackets[CDBTile.LOD - Database.PerformanceOffsetLOD].Item2);
-            StartCoroutine(ApplyTerrain());
+            //Debug.LogFormat("[TILE] CONSOLIDATE {0} ({1} > {2})", name, cameraDistance, Database.LODBrackets[CDBTile.LOD - Database.PerformanceOffsetLOD].Item2);
+            ApplyTerrain();
             GetComponent<MeshRenderer>().enabled = true;
             IsActive = true;
             foreach (var child in children)
@@ -481,7 +475,7 @@ namespace Cognitics.UnityCDB
 
         public void Divide()
         {
-            Debug.LogFormat("[TILE] DIVIDE {0} ({1} > {2})", name, cameraDistance, Database.LODBrackets[CDBTile.LOD - Database.PerformanceOffsetLOD].Item1);
+            //Debug.LogFormat("[TILE] DIVIDE {0} ({1} < {2})", name, cameraDistance, Database.LODBrackets[CDBTile.LOD - Database.PerformanceOffsetLOD].Item1);
             var cdbTiles = Database.DB.Tiles.Generate(GeographicBounds, CDBTile.LOD + 1);
             cdbTiles.ForEach(cdbTile => children.AddRange(Database.GenerateTiles(cdbTile)));
             children.ForEach(child => child.transform.SetParent(transform));
@@ -765,6 +759,7 @@ namespace Cognitics.UnityCDB
 
         private void CullOutOfView()
         {
+            return;
             var planes = GeometryUtility.CalculateFrustumPlanes(Camera.main);
             if(!GeometryUtility.TestPlanesAABB(planes, GetComponent<MeshRenderer>().bounds))
             {

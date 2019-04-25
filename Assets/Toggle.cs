@@ -10,6 +10,7 @@ public class Toggle : MonoBehaviour
     private Button btn;
     private bool btnPressed = false;
     public GameObject UserObject;
+    private const float DETAIL_MODE_SPEEDFACTOR = .5f;
 
 
     void Start()
@@ -45,7 +46,7 @@ public class Toggle : MonoBehaviour
                     double prevTouchDistance = Vector2.Distance(touch1PrevPos, touch2PrevPos);
                     double touchDistance = Vector2.Distance(touch1.position, touch2.position);
                     int touchDirection = (touchDistance - prevTouchDistance) > 0 ? 1 : -1;
-                    float translationSpeed = touchDirection * UserObject.GetComponent<User>().SpeedSlider * touchDelta.magnitude;
+                    float translationSpeed = touchDirection * UserObject.GetComponent<User>().SpeedSlider * touchDelta.magnitude * DETAIL_MODE_SPEEDFACTOR;
                     UserObject.GetComponent<User>().MoveForward(translationSpeed);
                 }
             }

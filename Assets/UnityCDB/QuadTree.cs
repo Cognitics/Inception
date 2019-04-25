@@ -147,6 +147,8 @@ namespace Cognitics.UnityCDB
 
         public bool Update()
         {
+            Root.UpdateDelegate(this);
+
             // bottom-up traversal avoids cascading HasGrandChildren() tests
             bool hasGrandChildren = false;
             foreach (var child in Children)
@@ -218,6 +220,7 @@ namespace Cognitics.UnityCDB
             try
             {
                 Distance = Root.Database.DistanceForBounds(GeographicBounds);
+                //Console.WriteLine(string.Format("DISTANCE {0} = {1}", GeographicBounds.String, Distance));
             }
             catch (Exception e)
             {

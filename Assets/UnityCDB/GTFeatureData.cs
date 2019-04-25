@@ -1,34 +1,25 @@
 ﻿using System.IO;
 using System.Threading.Tasks;
-using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
 using UnityEngine;
 using Cognitics.CoordinateSystems;
-using Cognitics.OpenFlight;
 
 namespace Cognitics.UnityCDB
 {
-    // Store off the data that needs to get passed to the newly instantianted game object
-    public struct GameObjFeatureData
-    {
-        public string objName;
-        public string fltName;
-        public Vector3 position;
-        public Quaternion rotation;
-
-        public bool Equals(GameObjFeatureData data)
-        {
-            return //objName == data.objName &&
-                   fltName == data.fltName;
-        }
-    }
-
     public class GTFeatureDataNode
     {
         public List<NetTopologySuite.Features.Feature> Features = new List<NetTopologySuite.Features.Feature>();
-        public Dictionary<NetTopologySuite.Features.Feature, GameObjFeatureData> gameObjFeatureData = new Dictionary<NetTopologySuite.Features.Feature, GameObjFeatureData>();
-        public List<GameObject> gameObjects = new List<GameObject>();
+        public Dictionary<NetTopologySuite.Features.Feature, Vector3> PositionByFeature = new Dictionary<NetTopologySuite.Features.Feature, Vector3>();
+        public List<GameObject> GameObjects = new List<GameObject>();
+        public Vector3 CameraPosition;
+
+        public int CompareByDistance2(NetTopologySuite.Features.Feature a, NetTopologySuite.Features.Feature b)
+        {
+            var adist = (PositionByFeature[a] - CameraPosition).sqrMagnitude;
+            var bdist = (PositionByFeature[b] - CameraPosition).sqrMagnitude;
+            return adist.CompareTo(bdist);
+        }
     }
 
     public class GTFeatureData
@@ -36,92 +27,52 @@ namespace Cognitics.UnityCDB
         [HideInInspector] public Database Database = null;
         [HideInInspector] public CDB.VectorComponent Component = null;
         [HideInInspector] public CDB.LOD lod;
+        [HideInInspector] public int MinLOD = 0;
 
-        public ConcurrentDictionary<QuadTreeNode, GTFeatureDataNode> DataByNode = new ConcurrentDictionary<QuadTreeNode, GTFeatureDataNode>();
+        ConcurrentDictionary<QuadTreeNode, GTFeatureDataNode> DataByNode = new ConcurrentDictionary<QuadTreeNode, GTFeatureDataNode>();
 
-        // If a feature uses previously unencountered FLT data, a new game object is created for it and placed in the scene, but also serves as a template for cloning of subsequent matches
-        public ConcurrentDictionary<GameObjFeatureData, GameObject> gameObjCache = new ConcurrentDictionary<GameObjFeatureData, GameObject>();
-
-        public void QuadTreeDataUpdate(QuadTreeNode node)       // QuadTreeDelegate
-        {
-            // TODO: any update operations (regardless of state)
-        }
+        //////////////////////////////////////////////////////////////////////////////// 
 
         public void QuadTreeDataLoad(QuadTreeNode node)         // QuadTreeDelegate
         {
             Task.Run(() => TaskLoad(node));
         }
 
-        public void QuadTreeDataLoaded(QuadTreeNode node)       // QuadTreeDelegate
+        private void TaskLoad(QuadTreeNode node)
         {
-            GTFeatureDataNode featureData = null;
-            if (!DataByNode.TryGetValue(node, out featureData))
-                return;
-            Database.StartCoroutine(Loaded_CR(node, featureData));
-        }
-
-        private IEnumerator Loaded_CR(QuadTreeNode node, GTFeatureDataNode featureData)
-        {
-            // Copy dictionary to avoid modification during processing
-            Dictionary<NetTopologySuite.Features.Feature, GameObjFeatureData> dict = new Dictionary<NetTopologySuite.Features.Feature, GameObjFeatureData>(featureData.gameObjFeatureData);
-
-            var timer = new System.Diagnostics.Stopwatch();
-            timer.Start();
-
-            foreach (var elem in dict)
+            try
             {
-                var gameObjectFeatureData = elem.Value;
-
-                bool newObj = false;
-                var origGameObj = GetOrAddGameObjectTemplate(gameObjectFeatureData, out newObj);
-                // If this is a brand new object, use it; otherwise, instantiate a clone
-                GameObject gameObj = newObj ? origGameObj : GameObject.Instantiate(origGameObj, node.Root.transform, false);
-                gameObj.name = gameObjectFeatureData.objName;
-                gameObj.transform.SetParent(node.Root.transform, false);
-                gameObj.transform.localScale = (float)Database.Projection.Scale * Vector3.one;
-                gameObj.transform.position = gameObjectFeatureData.position;
-                gameObj.transform.rotation = gameObjectFeatureData.rotation;
-                featureData.gameObjects.Add(gameObj);
-                var fltDB = GetOrAddFltDB(gameObjectFeatureData.fltName);
-                var flt = gameObj.GetOrAddComponent<OpenFlightRecordSet>();
-                flt.Init(gameObjectFeatureData.fltName, gameObj.transform.parent);
-                flt.SetDB(fltDB);
-                // If this is a freshly created object, we have to generate its hierarchy, mesh and material assignment, etc.
-                if (newObj)
-                    flt.Finish();
-
-                if (timer.ElapsedMilliseconds > (1000 / 60))
+                var featureData = new GTFeatureDataNode();
+                featureData.Features = ReadFeatures(node);
+                foreach (var feature in featureData.Features)
                 {
-                    timer.Stop();
-                    yield return null;
-                    timer.Start();
+                    var geographicCoordinates = new GeographicCoordinates(feature.Geometry.Centroid.Y, feature.Geometry.Centroid.X);
+                    var cartesianCoordinates = geographicCoordinates.TransformedWith(Database.Projection);
+                    float elev = Database.TerrainElevationAtLocation(geographicCoordinates);
+                    Vector3 position = new Vector3((float)cartesianCoordinates.X, elev, (float)cartesianCoordinates.Y);
+                    featureData.PositionByFeature[feature] = position;
                 }
+                DataByNode[node] = featureData;
             }
-
-            //Debug.Log("numHits: " + debugNumHits);
-        }
-
-        public void QuadTreeDataUnload(QuadTreeNode node)       // QuadTreeDelegate
-        {
-            GTFeatureDataNode featureData = null;
-            if (!DataByNode.TryGetValue(node, out featureData))
-                return;
-
-            foreach (var gameObj in featureData.gameObjects)
+            catch (System.Exception e)
             {
-                GameObject.Destroy(gameObj);
+                Debug.LogException(e);
             }
-            featureData.gameObjects.Clear();
-            featureData.gameObjFeatureData.Clear();
+
+            node.IsLoaded = true;
+            node.IsLoading = false;
         }
 
         private List<NetTopologySuite.Features.Feature> ReadFeatures(QuadTreeNode node)
         {
             var result = new List<NetTopologySuite.Features.Feature>();
+
+            if (node.Depth < MinLOD)
+                return result;
+
             var cdbTiles = Database.DB.Tiles.Generate(node.GeographicBounds, lod + node.Depth);
             foreach (var cdbTile in cdbTiles)
             {
-                var data = DataByNode[node];
                 var tileFeatures = Component.PointFeatures.Exists(cdbTile) ? Component.PointFeatures.Read(cdbTile) : null;
                 if (tileFeatures == null)
                     continue;
@@ -148,104 +99,144 @@ namespace Cognitics.UnityCDB
             return result;
         }
 
-        private void TaskLoad(QuadTreeNode node)
+        public void QuadTreeDataLoaded(QuadTreeNode node)       // QuadTreeDelegate
         {
-            var featureData = new GTFeatureDataNode();
-            DataByNode[node] = featureData;
+            var featureData = DataByNode[node];
+            Debug.LogFormat("[GTFeatureData:{0}] Loaded: {1} features.", node.Depth, featureData.Features.Count);
+        }
 
-            var features = ReadFeatures(node);
-            foreach (var feature in features)
+        ////////////////////////////////////////////////////////////////////////////////
+
+        public void QuadTreeDataUpdate(QuadTreeNode node)       // QuadTreeDelegate
+        {
+#if UNITY_EDITOR
+            if (node.IsActive)
             {
+                var sw = node.GeographicBounds.MinimumCoordinates;
+                var ne = node.GeographicBounds.MaximumCoordinates;
+                var se = new GeographicCoordinates(sw.Latitude, ne.Longitude);
+                var nw = new GeographicCoordinates(ne.Latitude, sw.Longitude);
+                var swc = sw.TransformedWith(Database.Projection);
+                var sec = se.TransformedWith(Database.Projection);
+                var nwc = nw.TransformedWith(Database.Projection);
+                var nec = ne.TransformedWith(Database.Projection);
+                var elev = 100.0f;
+                var swv = new Vector3((float)swc.X, elev, (float)swc.Y);
+                var sev = new Vector3((float)sec.X, elev, (float)sec.Y);
+                var nwv = new Vector3((float)nwc.X, elev, (float)nwc.Y);
+                var nev = new Vector3((float)nec.X, elev, (float)nec.Y);
+                Debug.DrawLine(swv, sev);
+                Debug.DrawLine(swv, nwv);
+                Debug.DrawLine(nwv, nev);
+                Debug.DrawLine(sev, nev);
+            }
+#endif
+
+            if (!node.IsActive)
+                return;
+
+            if (!node.IsLoaded)
+                return;
+
+            GTFeatureDataNode featureData = null;
+            if (!DataByNode.TryGetValue(node, out featureData))
+                return;
+            for (int i = 0; i < 1; ++i)
+            {
+                if (featureData.Features.Count < 1)
+                    return;
+                var feature = featureData.Features[0];
+                var dist2 = (featureData.PositionByFeature[feature] - featureData.CameraPosition).sqrMagnitude;
+                if (dist2 > 100.0f * 100.0f)
+                    return;
+                featureData.Features.RemoveAt(0);
+
                 try
                 {
-                    var cnam = feature.Attributes["CNAM"].ToString();
-
-                    string facc = feature.Attributes["FACC"].ToString();
-                    int fsc = int.Parse(feature.Attributes["FSC"].ToString());
-                    string modl = feature.Attributes["MODL"].ToString();
-                    string subdir = Database.DB.GTModelGeometry.Subdirectory(facc);
-                    var rotation = feature.Attributes["AO1"].ToString();
-
-                    string databasePath = Database.Path;
-                    string geomPath = Database.DB.GTModelGeometry.Subdirectory(facc);
-                    string entryFilename = Database.DB.GTModelGeometry.GeometryEntryFile.Filename(facc, fsc, modl);
-                    string str = Path.Combine(databasePath, geomPath, entryFilename + Database.DB.GTModelGeometry.GeometryEntryFile.Extension);
-
-                    var geographicCoordinates = new GeographicCoordinates(feature.Geometry.Centroid.Y, feature.Geometry.Centroid.X);
-                    var cartesianCoordinates = geographicCoordinates.TransformedWith(Database.Projection);
-                    float elev = Database.TerrainElevationAtLocation(geographicCoordinates);
-                    Vector3 v = new Vector3((float)cartesianCoordinates.X, elev, (float)cartesianCoordinates.Y);
-
-                    float heading = 0f;
-                    if (float.TryParse(rotation, out heading))
-                    {
-                        if (heading < 0f || heading >= 360f)
-                            Debug.LogWarningFormat("feature rotation: {0} is outside of established range [0-360)", heading);
-                    }
-                    else
-                    {
-                        Debug.LogError("could not find/parse rotation of feature - using default rotation");
-                    }
-
-                    var gameObjectFeatureData = new GameObjFeatureData() { objName = entryFilename, fltName = str, position = v, rotation = Quaternion.Euler(0f, heading, 0f) };
-                    featureData.gameObjFeatureData[feature] = gameObjectFeatureData;
+                    var modelGameObject = GenerateModel(node, feature);
+                    featureData.GameObjects.Add(modelGameObject);
                 }
                 catch (System.Exception e)
                 {
                     Debug.LogException(e);
                 }
-
             }
-
-            node.IsLoaded = true;
-            node.IsLoading = false;
         }
 
-        //int debugNumHits = 0;
-
-        private GameObject GetOrAddGameObjectTemplate(GameObjFeatureData gameObjFeatureData, out bool newObj)
+        GameObject GenerateModel(QuadTreeNode node, NetTopologySuite.Features.Feature feature)
         {
-            newObj = false;
-            GameObject gameObj = null;
-            foreach (var elem in gameObjCache)
+            var featureData = DataByNode[node];
+
+            var cnam = feature.Attributes["CNAM"].ToString();
+            string facc = feature.Attributes["FACC"].ToString();
+            int fsc = int.Parse(feature.Attributes["FSC"].ToString());
+            string modl = feature.Attributes["MODL"].ToString();
+            string subdir = Database.DB.GTModelGeometry.Subdirectory(facc);
+            var rotation = feature.Attributes["AO1"].ToString();
+
+            string geomPath = Database.DB.GTModelGeometry.Subdirectory(facc);
+            string entryFilename = Database.DB.GTModelGeometry.GeometryEntryFile.Filename(facc, fsc, modl);
+            string fltFilename = Path.Combine(Database.Path, geomPath, entryFilename + Database.DB.GTModelGeometry.GeometryEntryFile.Extension);
+
+            float heading = 0f;
+            if (float.TryParse(rotation, out heading))
             {
-                if (elem.Key.Equals(gameObjFeatureData)) // NOTE: uses Equals override
-                {
-                    //debugNumHits++;
-                    gameObj = elem.Value;
-                    break;
-                }
+                if (heading < 0f || heading >= 360f)
+                    Debug.LogWarningFormat("feature rotation: {0} is outside of established range [0-360)", heading);
+            }
+            else
+            {
+                Debug.LogError("could not find/parse rotation of feature - using default rotation");
             }
 
-            if (gameObj == null)
-            {
-                gameObj = gameObjCache[gameObjFeatureData] = new GameObject();
-                newObj = true;
-            }
-
+            var gameObj = new GameObject(modl);
+            var model = gameObj.AddComponent<Model>();
+            model.Path = Path.GetDirectoryName(fltFilename);
+            model.ZipFilename = null;
+            model.FltFilename = Path.GetFileName(fltFilename);
+            model.ModelManager = Database.ModelManager;
+            model.ModelManager.Models[model] = new ModelEntry();
+            model.MaterialManager = Database.MaterialManager;
+            model.MeshManager = Database.MeshManager;
+            gameObj.transform.SetParent(node.Root.transform, false);
+            gameObj.transform.localScale = (float)Database.Projection.Scale * Vector3.one;
+            gameObj.transform.position = featureData.PositionByFeature[feature];
+            gameObj.transform.rotation = Quaternion.Euler(0f, heading, 0f);
             return gameObj;
         }
 
-        private FltDatabase GetOrAddFltDB(string filename)
+        ////////////////////////////////////////////////////////////////////////////////
+
+        public void QuadTreeDataUnload(QuadTreeNode node)       // QuadTreeDelegate
         {
-            if (!File.Exists(filename))
+            GTFeatureDataNode featureData = null;
+            if (!DataByNode.TryGetValue(node, out featureData))
+                return;
+            foreach (var gameObj in featureData.GameObjects)
+                GameObject.Destroy(gameObj);
+            featureData.Features.Clear();
+            featureData.GameObjects.Clear();
+        }
+
+        public void Unload()
+        {
+            foreach (var node in DataByNode.Keys)
+                QuadTreeDataUnload(node);
+        }
+
+        ////////////////////////////////////////////////////////////////////////////////
+
+
+        public void ApplyCameraPosition(Vector3 position)
+        {
+            if (Time.frameCount % 60 != 0)
+                return;
+            foreach (var kv in DataByNode)
             {
-                Debug.LogErrorFormat("could not find flt db {0}", filename);
-                return null;
+                kv.Value.CameraPosition = position;
+                if(kv.Key.IsActive)
+                    kv.Value.Features.Sort(kv.Value.CompareByDistance2);
             }
-
-            FltDatabase fltDB = null;
-            if (!Database.FltDBs.TryGetValue(filename, out fltDB))
-            {
-                Stream stream = File.OpenRead(filename);
-                var reader = new FltReader(stream);
-                fltDB = new FltDatabase(null, RecordType.Invalid, reader, filename);
-                fltDB.Parse();
-
-                Database.FltDBs[filename] = fltDB;
-            }
-
-            return fltDB;
         }
 
         public void UpdateElevations(GeographicBounds bounds)
@@ -262,7 +253,7 @@ namespace Cognitics.UnityCDB
                     continue;
                 if (node.Key.GeographicBounds.MaximumCoordinates.Longitude < bounds.MinimumCoordinates.Longitude)
                     continue;
-                foreach (var go in node.Value.gameObjects)
+                foreach (var go in node.Value.GameObjects)
                 {
                     var position = go.transform.position;
                     coords.X = position.x;
@@ -281,7 +272,7 @@ namespace Cognitics.UnityCDB
         {
             int result = 0;
             foreach (var node in DataByNode)
-                result += node.Value.gameObjects.Count;
+                result += node.Value.GameObjects.Count;
             return result;
         }
 

@@ -100,6 +100,8 @@ public class PolygonButton : MonoBehaviour
 
     public void DrawPoly(ref GameObject arealObject)
     {
+        if (vs == null)
+            vs = camera.GetComponent<VertexSelector>();
         if (vs.polyPoints.Count < 3)
         {
             vs.polyPoints.Clear();

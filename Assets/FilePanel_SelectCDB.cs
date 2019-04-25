@@ -30,8 +30,14 @@ public class FilePanel_SelectCDB : MonoBehaviour
     private Text DebugPanelText = null;
     private DateTime LastDebugUpdate = DateTime.MinValue;
 
+    private ApplicationState ApplicationState = null;
 
-	void Start()
+    void Awake()
+    {
+        ApplicationState = GameObject.Find("Application").GetComponent<ApplicationState>();
+    }
+
+    void Start()
     {
         ConsoleRedirector.Apply();
         directoryViewButton.onClick.AddListener(OnClick);
@@ -71,13 +77,31 @@ public class FilePanel_SelectCDB : MonoBehaviour
 
         cdbGameObject = Instantiate(cdbPrefab);
         cdbDatabase = cdbGameObject.GetComponent<Database>();
-        //cdbDatabase.GeographicBounds = new Cognitics.CDB.GeographicBounds(new Cognitics.CDB.GeographicCoordinates(45, -124), new Cognitics.CDB.GeographicCoordinates(46, -123));
+        if (path.Contains("northwest_cdb"))
+        {
+            var duetgo = GameObject.Find("DUET");
+            var duet = duetgo.GetComponent<DUET>();
+            duet.Database = cdbDatabase;
+            cdbDatabase.GeographicBounds = new GeographicBounds(new GeographicCoordinates(47, -123), new GeographicCoordinates(48, -122));
+        }
+
+        if (ApplicationState.GeographicBounds != GeographicBounds.EmptyValue)
+            cdbDatabase.GeographicBounds = ApplicationState.GeographicBounds;
+        if (ApplicationState.StartPosition != Vector3.negativeInfinity)
+            UserObject.transform.position = ApplicationState.StartPosition;
+        if (ApplicationState.StartEulerAngles != Vector3.negativeInfinity)
+            UserObject.transform.eulerAngles = ApplicationState.StartEulerAngles;
+        if (ApplicationState.StartLOD != int.MinValue)
+            cdbLOD = ApplicationState.StartLOD;
+
+
         cdbDatabase.Initialize(path);
         cdbDatabase.name = cdbDatabase.DB.Name;
         directoryViewButton.GetComponentsInChildren<Text>()[0].text = cdbDatabase.name;
+        cdbDatabase.GenerateTerrainForLOD(cdbLOD);
         if (!cdbDatabase.Exists)
             return;
-        cdbDatabase.GenerateTerrainForLOD(cdbLOD);
+
         if (cdbDatabase.name.Contains("northwest_cdb") && NorthwestCDB_Buttons != null)
             NorthwestCDB_Buttons.SetActive(true);
         UserPositionCanvas.transform.Find("PositionPanel").GetComponent<CameraPosition>().Projection = cdbDatabase.Projection;

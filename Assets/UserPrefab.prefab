@@ -158,7 +158,7 @@ MonoBehaviour:
   NormalSpeed: 10
   ShiftSpeed: 100
   ClampAngle: 80
-  MinimumElevation: 50
+  MinimumElevation: 10
   SpeedSlider: 10
 --- !u!114 &114263883795992982
 MonoBehaviour:

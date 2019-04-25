@@ -26,20 +26,11 @@ namespace Cognitics.UnityCDB
         }
 
         public abstract class Entry { }
-        public class Entry<T> : Entry
-
-        {
-            public T data;
-            ~Entry()
-            {
-                System.Diagnostics.Debug.WriteLine("Entry Finalize ");
-            }
-
-        }
+        public class Entry<T> : Entry { public T data; }
 
         public int MaximumTasks = 4;
         public int tileLifeSpan = 30;
-        public int MaximumEntries = 20;
+        public int MaximumEntries = 100;
 
         public List<Request> WaitingRequests = new List<Request>();
         public List<Request> LoadedRequestsMRU = new List<Request>();

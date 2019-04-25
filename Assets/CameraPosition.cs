@@ -18,7 +18,7 @@ public class CameraPosition : MonoBehaviour
     CartesianCoordinates cartesianCoordinates = new CartesianCoordinates();
 
     UnityEngine.UI.Text uiText;
-    string format = "{0}{1:##0.0000}  {2}{3:###0.0000}   {4:###0.00}   {5:#0.0} FPS";
+    string format = "{0}{1:##0.0000}  {2}{3:###0.0000}   {4:###0.00}   {5:##0.0}°  {6:#0.0} FPS";
 
 
     void Awake()
@@ -48,7 +48,7 @@ public class CameraPosition : MonoBehaviour
         char lonChar = (position.x < 0) ? 'W' : 'E';
         float lat = (position.z < 0) ? -position.z : position.z;
         float lon = (position.x < 0) ? -position.x : position.x;
-        uiText.text = string.Format(format, latChar, lat, lonChar, lon, position.y, fps);
-
-	}
+        float heading = UserObject.transform.rotation.eulerAngles.y;
+        uiText.text = string.Format(format, latChar, lat, lonChar, lon, position.y, heading, fps);
+    }
 }

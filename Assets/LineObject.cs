@@ -27,6 +27,8 @@ public class LineObject : MonoBehaviour
     public GameObject FilePanelCDB;
     private FilePanel_SelectCDB fpsCDB;
     private User userScript;
+    public GameObject drone;
+    Drone droneScript;
 
     public class Line
     {
@@ -208,4 +210,23 @@ public class LineObject : MonoBehaviour
         UserShapefile.WriteFeaturesToShapefile(filepath + "/" + databaseName + "Line", vertexSelector.lineFeatures);
         UserShapefile.WriteFeaturesToKML(filepath + "/" + databaseName, vertexSelector.AllFeaturesToList());
     }
+
+    public void StartDrone()
+    {
+        droneScript = drone.GetComponent<Drone>();
+        droneScript.path = vectLocations;
+        droneScript.lo = this;
+        Instantiate(drone, vectLocations[0], Quaternion.identity);
+        gameObject.GetComponent<LineRenderer>().enabled = false;
+        pointFeatureCanvas.SetActive(false);
+#if UNITY_STANDALONE
+        userScript.enabled = true;
+#endif
+    }
+
+    public void EnableLineRenderer()
+    {
+        gameObject.GetComponent<LineRenderer>().enabled = true;
+    }
+
 }

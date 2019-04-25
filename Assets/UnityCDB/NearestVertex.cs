@@ -186,11 +186,11 @@ namespace Cognitics.UnityCDB
                 int x2D = Nearest2D % MeshDimension;
                 int y2D = Nearest2D / MeshDimension;
 
-                int xLowerBound = (int)(Math.Round((LeftLowerBound.x - tileOrigin.x) / xSpacing));
-                int zLowerBound = (int)(Math.Round((LeftLowerBound.z - tileOrigin.z) / zSpacing));
+                int xLowerBound = (int)(Math.Floor((LeftLowerBound.x - tileOrigin.x) / xSpacing));
+                int zLowerBound = (int)(Math.Floor((LeftLowerBound.z - tileOrigin.z) / zSpacing));
 
-                int xUpperBound = (int)(Math.Round((RightUpperBound.x - tileOrigin.x) / xSpacing));
-                int zUpperBound = (int)(Math.Round((RightUpperBound.z - tileOrigin.z) / zSpacing));
+                int xUpperBound = (int)(Math.Ceiling((RightUpperBound.x - tileOrigin.x) / xSpacing));
+                int zUpperBound = (int)(Math.Ceiling((RightUpperBound.z - tileOrigin.z) / zSpacing));
 
                 int xstart = Mathf.Max(Mathf.Max(x2D - searchRadius, xLowerBound), 0);
                 int xstop = Mathf.Min(Mathf.Min(x2D + searchRadius, xUpperBound), MeshDimension - 1);

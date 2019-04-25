@@ -11,10 +11,10 @@ public class Arrows : MonoBehaviour
 	void Update ()
     {
         if (isUpButtonPressed)
-            UserObject.transform.position += UserObject.GetComponent<User>().SpeedFactor * Time.deltaTime * Vector3.up;
+            UserObject.transform.position += UserObject.GetComponent<User>().SpeedFactor() * Time.deltaTime * Vector3.up;
 
         if (isDownButtonPressed)
-            UserObject.transform.position += UserObject.GetComponent<User>().SpeedFactor * Time.deltaTime * -Vector3.up;
+            UserObject.transform.position += UserObject.GetComponent<User>().SpeedFactor() * Time.deltaTime * -Vector3.up;
     }
 
     public void UpButtonPressed()

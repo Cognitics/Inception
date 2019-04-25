@@ -4,6 +4,7 @@ using UnityEngine.UI;
 
 public class User : MonoBehaviour
 {
+    private ModeButton mb;
     public float MouseSensitivity = 100.0f;
     public float TouchSensitivity = 0.04f;
 
@@ -16,16 +17,16 @@ public class User : MonoBehaviour
 
     public int SpeedSlider = 10;
 
-    public float SpeedFactor => Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift) ? ShiftSpeed * SpeedSlider : NormalSpeed * SpeedSlider;
-    public void MoveForward() => transform.position += SpeedFactor * Time.deltaTime * transform.forward;
+    //public float SpeedFactor => Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift) ? ShiftSpeed * SpeedSlider : NormalSpeed * SpeedSlider;
+    public void MoveForward() => transform.position += SpeedFactor() * Time.deltaTime * transform.forward;
     public void MoveForward(float distance) => transform.position += distance * transform.forward;
-    public void MoveBackward() => transform.position += SpeedFactor * Time.deltaTime * -transform.forward;
-    public void MoveRight() => transform.position += SpeedFactor  * Time.deltaTime * transform.right;
-    public void MoveLeft() => transform.position += SpeedFactor * Time.deltaTime * -transform.right;
-    public void MoveUp() => transform.position += SpeedFactor * Time.deltaTime * transform.up;
-    public void MoveDown() => transform.position += SpeedFactor * Time.deltaTime * -transform.up;
-    public void MoveHigher() => transform.position += SpeedFactor * Time.deltaTime * Vector3.up;
-    public void MoveLower() => transform.position += SpeedFactor * Time.deltaTime * -Vector3.up;
+    public void MoveBackward() => transform.position += SpeedFactor() * Time.deltaTime * -transform.forward;
+    public void MoveRight() => transform.position += SpeedFactor()  * Time.deltaTime * transform.right;
+    public void MoveLeft() => transform.position += SpeedFactor() * Time.deltaTime * -transform.right;
+    public void MoveUp() => transform.position += SpeedFactor() * Time.deltaTime * transform.up;
+    public void MoveDown() => transform.position += SpeedFactor() * Time.deltaTime * -transform.up;
+    public void MoveHigher() => transform.position += SpeedFactor() * Time.deltaTime * Vector3.up;
+    public void MoveLower() => transform.position += SpeedFactor() * Time.deltaTime * -Vector3.up;
 
     public void Rotate(Touch touch)
     {
@@ -33,6 +34,24 @@ public class User : MonoBehaviour
         rotation.y += touch.deltaPosition.x * TouchSensitivity * -1;
         rotation.x += touch.deltaPosition.y * TouchSensitivity;
         transform.rotation = Quaternion.Euler(rotation);
+    }
+
+    public float SpeedFactor()
+    {
+        if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))
+        {
+            if (mb.isDetailMode)
+                return ShiftSpeed * SpeedSlider * 0.2f;
+            else
+                return ShiftSpeed * SpeedSlider;
+        }
+        else
+        {
+            if (mb.isDetailMode)
+                return NormalSpeed * SpeedSlider * 0.2f;
+            else
+                return NormalSpeed * SpeedSlider;
+        }
     }
 
     public void Pan(Touch touch)
@@ -60,6 +79,7 @@ public class User : MonoBehaviour
         Input.simulateMouseWithTouches = false;
         yesNoDialog = YesNoDialog.Instance();
         yesNoDialog.ClosePanel();
+        mb = GameObject.Find("Mode").GetComponent<ModeButton>();
     }
 
     private void CancelQuit()
@@ -108,7 +128,7 @@ public class User : MonoBehaviour
         {
             float mouseX = Input.GetAxis("Mouse X");
             float mouseY = -Input.GetAxis("Mouse Y");
-            transform.position += new Vector3(-SpeedFactor * 10.0f * mouseX * Time.deltaTime, SpeedFactor * 10.0f * mouseY * Time.deltaTime, 0.0f);
+            transform.position += new Vector3(-SpeedFactor() * 10.0f * mouseX * Time.deltaTime, SpeedFactor() * 10.0f * mouseY * Time.deltaTime, 0.0f);
         }
         if (Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.I))
             MoveForward();
@@ -126,6 +146,8 @@ public class User : MonoBehaviour
             MoveHigher();
         if (Input.GetKey(KeyCode.KeypadPlus))
             MoveLower();
+        if (Input.GetKey(KeyCode.R))
+            Reset();
 
         var surfaceCollider = GetComponent<Cognitics.UnityCDB.SurfaceCollider>();
         if (surfaceCollider != null)

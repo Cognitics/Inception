@@ -136,7 +136,7 @@ public class VertexSelector : MonoBehaviour
             dot.SetActive(true);
             dots.Add(Instantiate(dot, loc, Quaternion.identity));
             dot.SetActive(false);
-            loc.y = loc.y + 10f;
+            loc.y = loc.y + 1f;
             linePoints.Add(loc);
         }
 
@@ -210,7 +210,7 @@ public class VertexSelector : MonoBehaviour
         string databaseName = cdbDatabase.name;
         databaseName = databaseName.Replace('.', '_');
 
-        var feats = Cognitics.CDB.Shapefile.ReadFeatures(filepath + "/" + databaseName + "Point.shp");
+        var feats = Cognitics.CDB.Shapefile.ReadFeatures(filepath + "/" + databaseName + "point.shp");
         foreach(Feature f in feats)
         {
             GeoAPI.Geometries.Coordinate[] coords = f.Geometry.Coordinates;

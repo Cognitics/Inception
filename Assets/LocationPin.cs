@@ -195,7 +195,7 @@ public class LocationPin : MonoBehaviour
 #else
         string filepath = cdbDatabase.Path;
 #endif
-        UserShapefile.WriteFeaturesToShapefile(filepath + "/" + databaseName + "Point", vertexSelector.pinFeatures);
+        UserShapefile.WriteFeaturesToShapefile(filepath + "/" + databaseName + "point", vertexSelector.pinFeatures);
         UserShapefile.WriteFeaturesToKML(filepath + "/" + databaseName, vertexSelector.AllFeaturesToList());
     }
 }

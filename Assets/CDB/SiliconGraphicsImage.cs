@@ -3,21 +3,21 @@ using System.IO;
 
 namespace Cognitics.CDB
 {
-    public static class SiliconGraphicsImage
+    public class SiliconGraphicsImage
     {
-        private static sbyte Storage;
-        private static sbyte BytesPerPixelComponent; // BPC
-        private static ushort Dimension;
-        private static ushort xSize, ySize, zSize;
-        private static int PixMin, PixMax;
-        private static string ImageName;
-        private static int ColorMapID;
+        private sbyte Storage;
+        private sbyte BytesPerPixelComponent; // BPC
+        private ushort Dimension;
+        private ushort xSize, ySize, zSize;
+        private int PixMin, PixMax;
+        private string ImageName;
+        private int ColorMapID;
 
-        private static long ImageLength;
-        private static float[] imageDataFloat;
-        private static byte[] imageDataRGB8;
+        private long ImageLength;
+        private float[] imageDataFloat;
+        private byte[] imageDataRGB8;
 
-        public static float[] Read(string filename, out int width, out int height, out int numChannels)
+        public float[] Read(string filename, out int width, out int height, out int numChannels)
         {
             width = 0;
             height = 0;
@@ -47,7 +47,7 @@ namespace Cognitics.CDB
             PixMax = SGIReader.ReadInt32Big();              // Max pixel value (e.g. 255)
             //var EmptySpace = new string(SGIReader.ReadChars(4));
             SGIReader.ReadChars(4);
-            //ImageName = OpenFlight.FltReader.GetString(SGIReader.ReadBytes(80)); // TODO: don't use FltReader
+            //ImageName = OpenFlight.FltReader.GetString(SGIReader.ReadBytes(80));
             SGIReader.ReadBytes(80);
             ColorMapID = SGIReader.ReadInt32Big();          // used for Run Length Encoding
             if (ColorMapID != 0)
@@ -57,7 +57,7 @@ namespace Cognitics.CDB
             }
 
             //var Dummy = new string(SGIReader.ReadChars(404));
-            SGIReader.ReadChars(404);
+            SGIReader.ReadBytes(404);
 
             if (Dimension == 1)
                 numChannels = 1;
@@ -184,15 +184,28 @@ namespace Cognitics.CDB
             return imageDataFloat;
         }
 
-        public static byte[] ReadRGB8(string filename, out int width, out int height, out int numChannels)
+        public byte[] ReadRGB8(string filename, byte[] bytes, out int width, out int height, out int numChannels)
         {
             width = 0;
             height = 0;
             numChannels = 0;
 
-            byte[] bytes = File.ReadAllBytes(filename);
-            Stream stream = new MemoryStream(bytes);
-            EndianBinaryReader SGIReader = new EndianBinaryReader(stream);
+            Stream stream = null;
+            EndianBinaryReader SGIReader = null;
+            if (bytes == null)
+            {
+                try
+                {
+                    bytes = File.ReadAllBytes(filename);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(ex.ToString());
+                    return null;
+                }
+            }
+            stream = new MemoryStream(bytes);
+            SGIReader = new EndianBinaryReader(stream);
 
             /** Read Header **/
             short magic = SGIReader.ReadInt16Big();    // 474
@@ -214,7 +227,7 @@ namespace Cognitics.CDB
             PixMax = SGIReader.ReadInt32Big();              // Max pixel value (e.g. 255)
             //var EmptySpace = new string(SGIReader.ReadChars(4));
             SGIReader.ReadChars(4);
-            //ImageName = OpenFlight.FltReader.GetString(SGIReader.ReadBytes(80)); // TODO: don't use FltReader
+            //ImageName = OpenFlight.FltReader.GetString(SGIReader.ReadBytes(80));
             SGIReader.ReadBytes(80);
             ColorMapID = SGIReader.ReadInt32Big();          // used for Run Length Encoding
             if (ColorMapID != 0)
@@ -224,13 +237,13 @@ namespace Cognitics.CDB
             }
 
             //var Dummy = new string(SGIReader.ReadChars(404));
-            SGIReader.ReadChars(404);
+            SGIReader.ReadBytes(404);
 
             if (Dimension == 1)
                 numChannels = 1;
             else if (Dimension == 2)
                 numChannels = 1;
-            else if (Dimension >= 3)
+            else if (Dimension == 3)
                 numChannels = zSize;
             else
             {
@@ -246,14 +259,26 @@ namespace Cognitics.CDB
                 ImageLength = bytes.Length - 512; // SGI Headers are 512 bytes
                 //ImageLength = new FileInfo(filename).Length - 512;
 
+                bool abort = false;
                 for (int channel = 0; channel < numChannels; ++channel)         // 3 or 4 channels (RGB[A])
                 {
                     for (int offset = channel; offset < ImageLength; offset += numChannels)
                     {
                         //If it's a 16 bit value, for now we'll just ignore the least significant byte
-                        byte fval = BytesPerPixelComponent == 1 ? SGIReader.ReadByte() : (byte)(SGIReader.ReadInt16Big()>>8);
-                        imageDataRGB8[offset] = fval;
+                        try
+                        {
+                            byte fval = BytesPerPixelComponent == 1 ? SGIReader.ReadByte() : (byte)(SGIReader.ReadInt16Big()>>8);
+                            imageDataRGB8[offset] = fval;
+                        }
+                        catch (Exception)// ex)
+                        {
+                            //Console.WriteLine(ex.ToString());
+                            abort = true;
+                            break;
+                        }
                     }
+                    if (abort)
+                        break;
                 }
             }
             else // RLE

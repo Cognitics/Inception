@@ -4,7 +4,8 @@
         "CoordinateSystems",
         "CDB",
         "GeoPackage",
-        "LibTiff"
+        "LibTiff",
+        "libzipw"
     ],
     "optionalUnityReferences": [],
     "includePlatforms": [],

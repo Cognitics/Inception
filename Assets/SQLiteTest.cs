@@ -1,8 +1,9 @@
-﻿using UnityEngine;
+﻿using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
 //From https://github.com/rizasif/sqlite-unity-plugin
 using Mono.Data.Sqlite;
 using System.Data;
-using NetTopologySuite.IO;
 
 public class SQLiteTest : MonoBehaviour
 {
@@ -37,10 +38,6 @@ public class SQLiteTest : MonoBehaviour
             }
         }
         dbcon.Close();
-
-        ShapefileReader shapeReader = new ShapefileReader(Application.persistentDataPath + "/N47W122_D201_S002_T003_L03_U5_R0.shp");
-        var geometries = shapeReader.ReadAll();
-        Debug.Log("Read " + geometries.Count.ToString() + " features.");
     }
 
     // Update is called once per frame

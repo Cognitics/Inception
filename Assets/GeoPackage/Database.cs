@@ -35,6 +35,18 @@ namespace Cognitics.GeoPackage
             }
         }
 
+        public Layer Layer(string name)
+        {
+            using (var statement = Connection.Prepare("SELECT * FROM gpkg_contents WHERE table_name=@table_name"))
+            {
+                statement.AddParameter("@table_name", name);
+                statement.Execute();
+                while (statement.Next())
+                    return ReadLayer(statement);
+            }
+            return null;
+        }
+
         public IEnumerable<Layer> Layers()
         {
             using (var statement = Connection.Execute("SELECT * FROM gpkg_contents"))

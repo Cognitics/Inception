@@ -85,12 +85,12 @@ namespace Cognitics.GeoPackage
 
         public IEnumerable<long> GetRelatedFeatureIds(string mappingTable, long featureId)
         {
-            using (var statement = database.Connection.Prepare("SELECT * FROM " + mappingTable + "where base_id=@base_id"))
+            using (var statement = database.Connection.Prepare("SELECT * FROM " + mappingTable + " WHERE base_id=@base_id"))
             {
                 statement.AddParameter("@base_id", featureId);
                 statement.Execute();
                 while (statement.Next())
-                    yield return statement.Value("related_id", 0);
+                    yield return statement.Value("related_id", (long)0);
             }
         }
 
@@ -152,6 +152,25 @@ namespace Cognitics.GeoPackage
                 statement.AddParameter("@related_id", relatedFID);
                 statement.Execute();
             }
+        }
+
+        public Dictionary<string, object> ReadRelatedEntry(string relatedTableName, long relatedFID)
+        {
+            // *** WARNING *** : table name cannot be parameterized ; this is vulnerable to sql injection
+            string query = "SELECT * FROM " + relatedTableName + " WHERE id=@fid";
+            using (var statement = Database.Connection.Prepare(query))
+            {
+                statement.AddParameter("@fid", relatedFID);
+                statement.Execute();
+                while (statement.Next())
+                {
+                    var row = new Dictionary<string, object>();
+                    for (int i = 0; i < statement.FieldCount; ++i)
+                        row[statement.Key(i)] = statement.Value(i);
+                    return row;
+                }
+            }
+            return null;
         }
 
         #region IDisposable Support

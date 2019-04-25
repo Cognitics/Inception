@@ -1,8 +1,8 @@
-﻿
-using System;
+﻿using System;
 using System.IO;
 using System.Collections.Generic;
 using System.Text;
+using BitMiracle.LibTiff.Classic;
 
 namespace Cognitics.OpenFlight
 {
@@ -90,6 +90,17 @@ namespace Cognitics.OpenFlight
         IndexedString = 132,
         ShaderPalette = 133,
         //Extended*
+        ExtendedMaterialHeader = 135,
+        ExtendedMaterialAmbient = 136,
+        ExtendedMaterialDiffuse = 137,
+        ExtendedMaterialSpecular = 138,
+        ExtendedMaterialEmissive = 139,
+        ExtendedMaterialAlpha = 140,
+        ExtendedMaterialLightMap = 141,
+        ExtendedMaterialNormalMap = 142,
+        ExtendedMaterialBumpMap = 143,
+        ExtendedMaterialShadowMap = 145,
+        ExtendedMaterialReflectionMap = 147,
     }
 
     public class FltReader : EndianBinaryReader
@@ -114,6 +125,8 @@ namespace Cognitics.OpenFlight
         public RecordType Opcode = RecordType.Invalid;
         public ushort RecordLength = 0;
         public bool Postpone = false;
+
+        public Mesh CurrentMeshRecord = null;
 
         public FltReader(Stream input) : base(input) { }
 
@@ -166,6 +179,8 @@ namespace Cognitics.OpenFlight
 
         public Record CreateRecord(Record parent, RecordType recordType, FltReader reader)
         {
+            //Console.WriteLine("Record.Parse: recordType: " + recordType.ToString());
+
             Record baseData = null;
             if (recordType == RecordType.Header)
             {
@@ -267,12 +282,24 @@ namespace Cognitics.OpenFlight
                 data.Parse();
                 baseData = data;
             }
-            //else if (recordType == RecordType.Mesh)
-            //{
-            //    var data = new Mesh(this);
-            //    data.Parse();
-            //    basedata = data;
-            //}
+            else if (recordType == RecordType.Mesh)
+            {
+                var data = new Mesh(parent, recordType, reader);
+                data.Parse();
+                baseData = data;
+            }
+            else if (recordType == RecordType.LocalVertexPool)
+            {
+                var data = new LocalVertexPool(parent, recordType, reader);
+                data.Parse();
+                baseData = data;
+            }
+            else if (recordType == RecordType.MeshPrimitive)
+            {
+                var data = new MeshPrimitive(parent, recordType, reader);
+                data.Parse();
+                baseData = data;
+            }
             else if (recordType == RecordType.Face)
             {
                 var data = new Face(parent, recordType, reader);
@@ -305,7 +332,13 @@ namespace Cognitics.OpenFlight
             }
             else if (recordType == RecordType.VertexWithColorNormalUv)
             {
-                var data = new VertexWithColorNormalUv(parent, recordType, reader);
+                var data = new VertexWithColorNormalUV(parent, recordType, reader);
+                data.Parse();
+                baseData = data;
+            }
+            else if (recordType == RecordType.VertexWithColorUv)
+            {
+                var data = new VertexWithColorUV(parent, recordType, reader);
                 data.Parse();
                 baseData = data;
             }
@@ -315,16 +348,189 @@ namespace Cognitics.OpenFlight
                 data.Parse();
                 baseData = data;
             }
-
-            //Console.WriteLine("Record.Parse: recordType: " + recordType.ToString());
+            //else if (recordType == RecordType.ExtendedMaterialHeader)
+            //{
+            //    var data = new ExtendedMaterialHeader(parent, recordType, reader);
+            //    data.Parse();
+            //    baseData = data;
+            //}
+            //else if (recordType == RecordType.MultiTexture)
+            //{
+            //    var data = new MultiTexture(parent, recordType, reader);
+            //    data.Parse();
+            //    baseData = data;
+            //}
+            //else if (recordType == RecordType.UvList)
+            //{
+            //    var data = new UvList(parent, recordType, reader);
+            //    data.Parse();
+            //    baseData = data;
+            //}
+            //else
+            //{
+            //    Console.WriteLine("Record.Parse: recordType: " + recordType.ToString());
+            //}
 
             return baseData;
         }
     }
 
+    #region Geometry
+
+    public class Material
+    {
+        public MaterialPalette materialPalette = null;
+        public TexturePalette mainTexturePalette = null;
+        public TexturePalette detailTexturePalette = null;
+
+        public Material(MaterialPalette _materialPalette, TexturePalette _mainTexturePalette, TexturePalette _detailTexturePalette)
+        {
+            materialPalette = _materialPalette;
+            mainTexturePalette = _mainTexturePalette;
+            detailTexturePalette = _detailTexturePalette;
+        }
+
+        public bool Equals(MaterialPalette otherMaterialPalette, TexturePalette otherMainTexturePalette, TexturePalette otherDetailTexturePalette)//, ushort otherTransparency, Face.LightMode otherLightMode)
+        {
+            return Equals(materialPalette, otherMaterialPalette) &&
+                Equals(mainTexturePalette, otherMainTexturePalette) &&
+                Equals(detailTexturePalette, otherDetailTexturePalette);
+        }
+    }
+
+    public class Texture
+    {
+        public int Width = 0;
+        public int Height = 0;
+        public int NumChannels = 0;
+        public byte[] rgb = null;
+        public string Path = null;
+
+        public Texture(string path)
+        {
+            Path = path;
+        }
+
+        public void Parse(byte[] bytes = null)
+        {
+            if (Path.EndsWith(".rgb"))
+            {
+                var texture = new CDB.SiliconGraphicsImage();
+                rgb = texture.ReadRGB8(Path, bytes, out Width, out Height, out NumChannels);
+            }
+            // TODO: haven't found where in the spec these are actually dealt with (they never seem to be main/detail texture), and the code is preliminary
+            else if (Path.EndsWith(".tif"))
+            {
+                // TODO: read mesh type from channel 1
+
+                string logname = "OpenFlight.Texture.Parse(): " + Path;
+
+                var tiff = Tiff.Open(Path, "r");
+                if (tiff == null)
+                {
+                    Console.WriteLine(logname + ": Tiff.Open() failed");
+                    return;// null;
+                }
+                FieldValue[] value = tiff.GetField(TiffTag.IMAGEWIDTH);
+                Width = value[0].ToInt();
+                value = tiff.GetField(TiffTag.IMAGELENGTH);
+                Height = value[0].ToInt();
+                {
+                    FieldValue[] bitDepth = tiff.GetField(TiffTag.BITSPERSAMPLE);
+                    FieldValue[] dataTypeTag = tiff.GetField(TiffTag.SAMPLEFORMAT);
+                    int bpp = bitDepth[0].ToInt();
+                    NumChannels = bpp / 8;
+                    int dataType = dataTypeTag[0].ToInt();
+
+                    int stride = tiff.ScanlineSize();
+                    byte[] buffer = new byte[stride];
+
+                    var result = new byte[Width * Height];
+
+                    for (int row = 0; row < Height; ++row)
+                    {
+                        if (!tiff.ReadScanline(buffer, row))
+                        {
+                            Console.WriteLine(logname + ": Tiff.ReadScanLine(buffer, " + row.ToString() + ") failed");
+                            break;
+                        }
+
+                        /*// Case of float
+                        if (bpp == 32 && dataType == 3)
+                        {
+                            for (int col = 0; col < Width; ++col)
+                                result[(row * Width) + col] = BitConverter.ToSingle(buffer, col * 4);
+                        }
+                        // case of Int32
+                        else if (bpp == 32 && dataType == 2)
+                        {
+                            for (int col = 0; col < Width; ++col)
+                                result[(row * Width) + col] = BitConverter.ToInt32(buffer, col * 4);
+                        }
+                        // Case of Int16
+                        else if (bpp == 16 && dataType == 2)
+                        {
+                            for (int col = 0; col < Width; ++col)
+                                result[(row * Width) + col] = BitConverter.ToInt16(buffer, col * 2);
+                        }
+                        // Case of Int8
+                        else*/
+                        //{
+                            if (bpp == 8 && (dataType == 1 || dataType == 2))
+                            {
+                                for (int col = 0; col < Width; ++col)
+                                    result[(row * Width) + col] = buffer[col];
+                            }
+                        //}
+                        // Case of Unknown Datatype
+                        else
+                        {
+                            // TODO: fix log. it should be current with what we support.
+                            Console.WriteLine(
+                                logname +
+                                ": Unknown Tiff file format " +
+                                "(bits per pixel:" + bpp.ToString() +
+                                ",  dataType code: " + dataType.ToString() +
+                                "). Expected bpp values: 8, 16, or 32. Expected dataType values: 1 (two's complement signed int), or 3 (IEEE float)."
+                                );
+                        }
+                    }
+
+                    rgb = result;
+                }
+            }
+        }
+    }
+
+    public class Submesh
+    {
+        public Material material = null;
+        // TODO: attempt standard array instead of list
+        public List<int> triangles = new List<int>();
+        public List<int> backfaceTriangles = new List<int>();
+
+        public Submesh(Material _material)
+        {
+            material = _material;
+        }
+    }
+
+    public struct Vector
+    {
+        public float x, y, z;
+        public Vector(float _x, float _y, float _z) { x = _x; y = _y; z = _z; }
+    }
+
+    public struct UV
+    {
+        public float u, v;
+        public UV(float _u, float _v) { u = _u; v = _v; }
+    }
+
+    #endregion
+
     #region Records
 
-    [Serializable]
     public abstract class Record
     {
         public FltReader Reader = null;
@@ -332,7 +538,6 @@ namespace Cognitics.OpenFlight
         public Record Parent = null;
         public List<Record> Children = new List<Record>();
         public RecordType RecordType = RecordType.Invalid;
-        //public bool Disable = false;
 
         public Record(Record parent, RecordType recordType, FltReader reader)
         {
@@ -366,8 +571,12 @@ namespace Cognitics.OpenFlight
                 else if (RecordType == RecordType.Object || 
                          RecordType == RecordType.Group || 
                          RecordType == RecordType.LevelOfDetail)
-                         // || RecordType == RecordType.DegreeOfFreedom || RecordType == RecordType.Switch)
+                         //RecordType == RecordType.DegreeOfFreedom || 
+                         //RecordType == RecordType.Switch || 
+                         //RecordType == RecordType.Invalid)
                 {
+                    if (!Root.IdRecords.Contains(this as IdRecord)) // TODO: fix bug causing dupes in the record list so this check can go away
+                        Root.IdRecords.Add(this as IdRecord);
                     if (nextRecordType != RecordType.PushLevel &&
                         nextRecordType != RecordType.LongId &&
                         nextRecordType != RecordType.Comment &&
@@ -396,6 +605,23 @@ namespace Cognitics.OpenFlight
                         break;
                     }
                 }
+                //else if (RecordType == RecordType.ExtendedMaterialHeader)
+                //{
+                //    if (nextRecordType != RecordType.ExtendedMaterialAmbient || 
+                //        nextRecordType != RecordType.ExtendedMaterialDiffuse || 
+                //        nextRecordType != RecordType.ExtendedMaterialSpecular || 
+                //        nextRecordType != RecordType.ExtendedMaterialEmissive || 
+                //        nextRecordType != RecordType.ExtendedMaterialAlpha || 
+                //        nextRecordType != RecordType.ExtendedMaterialLightMap || 
+                //        nextRecordType != RecordType.ExtendedMaterialNormalMap || 
+                //        nextRecordType != RecordType.ExtendedMaterialBumpMap || 
+                //        nextRecordType != RecordType.ExtendedMaterialShadowMap || 
+                //        nextRecordType != RecordType.ExtendedMaterialReflectionMap)
+                //    {
+                //        Reader.Postpone = true;
+                //        break;
+                //    }
+                //}
 
                 // Calculate the parent
                 Record parent = null;
@@ -427,20 +653,76 @@ namespace Cognitics.OpenFlight
                 }
             }
         }
+
+        public IdRecord FindParentIdRecord()
+        {
+            var parent = Parent;
+            while (parent != null)
+            {
+                if (parent is IdRecord)
+                    return parent as IdRecord;
+                else
+                    parent = parent.Parent;
+            }
+
+            return null;
+        }
+
+        public Face FindParentFace()
+        {
+            var parent = Parent;
+            while (parent != null)
+            {
+                if (parent is Face)
+                    return parent as Face;
+                else
+                    parent = parent.Parent;
+            }
+
+            return null;
+        }
     }
 
     public abstract class IdRecord : Record
     {
         public string idStr = null;
+        // TODO: attempt standard array instead of list
+        public List<Submesh> Submeshes = null;
 
         protected const int fixedIdLength = 8;
 
         public IdRecord(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader)
         {
         }
+
+        public void InitGeometry()
+        {
+            if (Submeshes == null)
+                Submeshes = new List<Submesh>();
+        }
+
+        public bool HasGeometry()
+        {
+            return Submeshes != null && Submeshes.Count != 0;
+        }
+
+        public Submesh GetOrAddSubmesh(/*Face face, */Material material)
+        {
+            foreach (var existingSubmesh in Submeshes)
+            {
+                var subMeshMaterial = existingSubmesh.material;
+                if (subMeshMaterial.Equals(material.materialPalette, material.mainTexturePalette, material.detailTexturePalette))//, face.transparency, face.lightMode))
+                    return existingSubmesh;
+            }
+
+            var newSubmesh = new Submesh(material);
+            Submeshes.Add(newSubmesh);
+
+            return newSubmesh;
+        }
     }
 
-    public class FltDatabase : Record
+    public class FltDatabase : IdRecord // NOTE: not a true IdRecord, in that it has no idStr. this is the ultimate fallback for generating a geometry
     {
         public Header Header = null;
         public ColorPalette ColorPalette = null;
@@ -449,6 +731,10 @@ namespace Cognitics.OpenFlight
         public VertexPalette VertexPalette = null;
         public Stack<PushLevel> PushStack = new Stack<PushLevel>();
         public string Path = null;
+        public List<IdRecord> geometryRecords = null;
+        public List<IdRecord> IdRecords = new List<IdRecord>();
+        public List<Material> Materials = new List<Material>();
+        public List<FltDatabase> ExternalDBs = new List<FltDatabase>();
 
         public FltDatabase(Record parent, RecordType recordType, FltReader reader, string path) : base(parent, recordType, reader)
         {
@@ -456,17 +742,142 @@ namespace Cognitics.OpenFlight
             Reader = reader;
             RecordType = recordType;
             Path = path;
+            InitGeometry(); // TODO: don't always do this, usually an idRecord has the geometry we care about
         }
 
         public override void Parse()
         {
             base.Parse();
 
+            geometryRecords = SelectGeometryRecords();
+
             Reader.Close();
+        }
+
+        public Material GetOrAddMaterial(Face face)
+        {
+            return GetOrAddMaterial(face.materialIndex, face.texturePatternIndex, face.detailTexturePatternIndex);
+        }
+
+        public Material GetOrAddMaterial(short materialIndex, short texturePatternIndex, short detailTexturePatternIndex)
+        {
+            var materialPalette = FindMaterialPalette(materialIndex);
+            var mainTexturePalette = FindMainTexturePalette(texturePatternIndex);
+            var detailTexturePalette = FindDetailTexturePalette(detailTexturePatternIndex);
+
+            foreach (var existingMaterial in Materials)
+            {
+                if (existingMaterial.Equals(materialPalette, mainTexturePalette, detailTexturePalette))//, face.transparency, face.lightMode))
+                    return existingMaterial;
+            }
+
+            var newMaterial = new Material(materialPalette, mainTexturePalette, detailTexturePalette);
+            Materials.Add(newMaterial);
+
+            return newMaterial;
+        }
+
+        private MaterialPalette FindMaterialPalette(short index)
+        {
+            if (index != -1)
+            {
+                foreach (var palette in MaterialPalettes)
+                {
+                    if (palette.materialIndex == index)
+                        return palette;
+                }
+            }
+
+            return null;
+        }
+
+        private TexturePalette FindMainTexturePalette(short index)
+        {
+            if (index != -1)
+            {
+                foreach (var palette in TexturePalettes)
+                {
+                    if (palette.texturePatternIndex == index)
+                        return palette;
+                }
+            }
+
+            return null;
+        }
+
+        private TexturePalette FindDetailTexturePalette(short index)
+        {
+            if (index != -1)
+            {
+                foreach (var palette in TexturePalettes)
+                {
+                    if (palette.texturePatternIndex == index)
+                        return palette;
+                }
+            }
+
+            return null;
+        }
+
+        private List<IdRecord> SelectGeometryRecords()
+        {
+            var _geometryRecords = new List<IdRecord>();
+
+            for (int i = IdRecords.Count - 1; i >= 0; --i)
+            {
+                var idRecord = IdRecords[i];
+                if (idRecord.RecordType == RecordType.LevelOfDetail)
+                {
+                    if (idRecord.HasGeometry())
+                    {
+                        _geometryRecords.Add(idRecord);
+                    }
+                    else
+                    {
+                        for (int j = 0; j < IdRecords.Count; ++j)
+                        {
+                            var idRecord2 = IdRecords[j];
+                            if (idRecord2.RecordType == RecordType.Group)
+                            {
+                                var parent = idRecord2.FindParentIdRecord();
+                                if (parent != null && parent == idRecord && idRecord2.HasGeometry())
+                                {
+                                    _geometryRecords.Add(idRecord2);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            //for (int i = ExternalDBs.Count - 1; i >= 0; --i)
+            //{
+            //    var externalDB = ExternalDBs[i];
+            //    var externalGeometryRecords = externalDB.SelectGeometryRecords();
+            //    _geometryRecords.AddRange(externalGeometryRecords);
+            //}
+
+            // fallback
+            if (_geometryRecords.Count == 0)
+            {
+                for (int i = 0; i < IdRecords.Count; ++i)
+                {
+                    var idRecord = IdRecords[i];
+                    if (idRecord.HasGeometry())
+                        _geometryRecords.Add(idRecord);
+                }
+            }
+
+            // last fallback
+            if (_geometryRecords.Count == 0 && Root.HasGeometry())
+                _geometryRecords.Add(Root);
+
+            int geomCount = _geometryRecords.Count;
+
+            return _geometryRecords;
         }
     }
 
-    [Serializable]
     public class Header : IdRecord
     {
         static bool skipUnusedFields = true; // if we don't use it (yet), skip it
@@ -653,11 +1064,9 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            /*short length = */Reader.ReadInt16Big();
+            Reader.ReadInt16Big(); // length
 
             commentStr = FltReader.GetString(Reader.ReadBytes(Reader.RecordLength - 4));
-            //if (commentStr.StartsWith("DB:Switch name=\"Damage_State\""))
-            //    Parent.Disable = true;
         }
     }
 
@@ -845,13 +1254,17 @@ namespace Cognitics.OpenFlight
     public class VertexPalette : Record
     {
         public Dictionary<int, VertexWithColor> Dict = new Dictionary<int, VertexWithColor>();
+        public Dictionary<VertexWithColor, int> IndexDict = new Dictionary<VertexWithColor, int>();
+        public List<VertexWithColor> List = new List<VertexWithColor>();
+        public int Length = 0;
         public int Offset = 0;
 
         public VertexPalette(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
 
         public override void Parse()
         {
-            int length = Reader.ReadInt32Big();
+            Length = Reader.ReadInt32Big() - 8;
+
 
             Offset = 8;
 
@@ -1005,12 +1418,287 @@ namespace Cognitics.OpenFlight
         }
     }
 
-    //public class Mesh : Record
-    //{
-    //    public Mesh(FltReader reader)
-    //    {
-    //    }
-    //}
+    public class Mesh : Record
+    {
+        public LocalVertexPool LocalVertexPool;
+        public Submesh Submesh;
+
+        public string idStr = null;
+        public int irColorCode;
+        public short relativePriority;
+        public Face.DrawType drawType;
+        public bool textureWhite;
+        public ushort colorNameIndex;
+        public ushort alternateColorNameIndex;
+        public Face.Template template;
+        public short detailTexturePatternIndex = -1;
+        public short texturePatternIndex = -1;
+        public short materialIndex = -1;
+        public short surfaceMaterialCode; // for DFAD
+        public short featureId; // for DFAD
+        public int irMaterialCode;
+        public ushort transparency;
+        public byte lodGenerationControl;
+        public byte lineStyleIndex;
+        public Face.Flags flags;
+        public Face.LightMode lightMode;
+        public uint packedColorPrimary; // only b,g,r used
+        public uint packedColorAlternate; // only b,g,r used
+        public short textureMappingIndex = -1;
+        public int primaryColorIndex = -1;
+        public int alternateColorIndex = -1;
+        public short shaderIndex = -1;
+
+        public Mesh(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            Reader.CurrentMeshRecord = this;
+            idStr = FltReader.GetString(Reader.ReadBytes(8));
+            irColorCode = Reader.ReadInt32Big();
+            Reader.ReadBytes(4);
+            relativePriority = Reader.ReadInt16Big();
+            drawType = (Face.DrawType)Reader.ReadByte();
+            if (drawType != Face.DrawType.DrawSolidWithBackfaceCulling && drawType != Face.DrawType.DrawSolidNoBackfaceCulling)
+                Console.WriteLine("Face: unsupported draw type " + drawType.ToString());
+            textureWhite = Reader.ReadBoolean();
+            if (textureWhite)
+                Console.WriteLine("Face: unsupported textureWhite");
+            colorNameIndex = (ushort)Reader.ReadInt16Big();
+            alternateColorNameIndex = (ushort)Reader.ReadInt16Big();
+            Reader.ReadBytes(1);
+            template = (Face.Template)Reader.ReadByte();
+            int detailTexturePatternIndex = Reader.ReadInt16Big();
+            if (detailTexturePatternIndex != -1)
+                Console.WriteLine("Face: detail texture pattern index specified");
+            int texturePatternIndex = Reader.ReadInt16Big();
+            int materialIndex = Reader.ReadInt16Big();
+            surfaceMaterialCode = Reader.ReadInt16Big();
+            featureId = Reader.ReadInt16Big();
+            irMaterialCode = Reader.ReadInt32Big();
+            transparency = (ushort)Reader.ReadInt16Big();
+            lodGenerationControl = Reader.ReadByte();
+            lineStyleIndex = Reader.ReadByte();
+            flags = (Face.Flags)Reader.ReadInt32Big();
+            lightMode = (Face.LightMode)Reader.ReadByte();
+            Reader.ReadBytes(7);
+            packedColorPrimary = (uint)Reader.ReadInt32Big();
+            packedColorAlternate = (uint)Reader.ReadInt32Big();
+            textureMappingIndex = Reader.ReadInt16Big();
+            Reader.ReadInt16Big();
+            primaryColorIndex = Reader.ReadInt32Big();
+            alternateColorIndex = Reader.ReadInt32Big();
+            Reader.ReadInt16Big();
+
+            shaderIndex = Reader.ReadInt16Big();
+
+            var material = Root.GetOrAddMaterial((short)materialIndex, (short)texturePatternIndex, (short)detailTexturePatternIndex);
+            Submesh = Root.GetOrAddSubmesh(material);
+        }
+    }
+
+    public class LocalVertexPool : Record
+    {
+        public bool hasPosition = false;
+        public bool hasColor = false;
+        public bool hasRGBA = false;
+        public bool hasNormal = false;
+        public bool hasBaseUV = false;
+        public bool hasUV1 = false;
+        public bool hasUV2 = false;
+        public bool hasUV3 = false;
+        public bool hasUV4 = false;
+        public bool hasUV5 = false;
+        public bool hasUV6 = false;
+        public bool hasUV7 = false;
+        public List<LocalVertex> vertices = new List<LocalVertex>();
+        public int paletteOffset = 0;
+
+        public class LocalVertex
+        {
+            public double x, y, z;
+            public uint color;
+            public float i, j, k;
+            public float u, v;
+        }
+
+        public LocalVertexPool(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            if (Reader.CurrentMeshRecord != null)
+                Reader.CurrentMeshRecord.LocalVertexPool = this;
+
+            uint count = Reader.ReadUInt32Big();
+            uint attr = Reader.ReadUInt32Big();
+            hasPosition = (attr & (1 << 31)) > 0;
+            hasColor = (attr & (1 << 30)) > 0;
+            hasRGBA = (attr & (1 << 29)) > 0;
+            hasNormal = (attr & (1 << 28)) > 0;
+            hasBaseUV = (attr & (1 << 27)) > 0;
+            hasUV1 = (attr & (1 << 26)) > 0;
+            hasUV2 = (attr & (1 << 25)) > 0;
+            hasUV3 = (attr & (1 << 24)) > 0;
+            hasUV4 = (attr & (1 << 23)) > 0;
+            hasUV5 = (attr & (1 << 22)) > 0;
+            hasUV6 = (attr & (1 << 21)) > 0;
+            hasUV7 = (attr & (1 << 20)) > 0;
+            for (uint index = 0; index < count; ++index)
+            {
+                var vertex = new LocalVertex();
+                if (hasPosition)
+                {
+                    vertex.x = Reader.ReadDoubleBig();
+                    vertex.y = Reader.ReadDoubleBig();
+                    vertex.z = Reader.ReadDoubleBig();
+                }
+                if (hasColor || hasRGBA)
+                    vertex.color = Reader.ReadUInt32Big();
+                if (hasNormal)
+                {
+                    vertex.i = Reader.ReadSingleBig();
+                    vertex.j = Reader.ReadSingleBig();
+                    vertex.k = Reader.ReadSingleBig();
+                }
+                if (hasBaseUV)
+                {
+                    vertex.u = Reader.ReadSingleBig();
+                    vertex.v = Reader.ReadSingleBig();
+                }
+                if (hasUV1)
+                {
+                    Reader.ReadSingleBig();
+                    Reader.ReadSingleBig();
+                }
+                if (hasUV2)
+                {
+                    Reader.ReadSingleBig();
+                    Reader.ReadSingleBig();
+                }
+                if (hasUV3)
+                {
+                    Reader.ReadSingleBig();
+                    Reader.ReadSingleBig();
+                }
+                if (hasUV4)
+                {
+                    Reader.ReadSingleBig();
+                    Reader.ReadSingleBig();
+                }
+                if (hasUV5)
+                {
+                    Reader.ReadSingleBig();
+                    Reader.ReadSingleBig();
+                }
+                if (hasUV6)
+                {
+                    Reader.ReadSingleBig();
+                    Reader.ReadSingleBig();
+                }
+                if (hasUV7)
+                {
+                    Reader.ReadSingleBig();
+                    Reader.ReadSingleBig();
+                }
+                vertices.Add(vertex);
+            }
+
+            paletteOffset = Root.VertexPalette.Dict.Count;
+            for (int i = 0; i < vertices.Count; ++i)
+            {
+                var v = vertices[i];
+                var vpv = new VertexWithColorNormalUV(null, RecordType.VertexWithColorNormalUv, null);
+                vpv.x = v.x;
+                vpv.y = v.y;
+                vpv.z = v.z;
+                vpv.i = v.i;
+                vpv.j = v.j;
+                vpv.k = v.k;
+                vpv.u = v.u;
+                vpv.v = v.v;
+                Root.VertexPalette.Dict[Root.VertexPalette.Offset] = vpv;
+                Root.VertexPalette.IndexDict[vpv] = Root.VertexPalette.List.Count;
+                Root.VertexPalette.List.Add(vpv);
+                Root.VertexPalette.Offset += 64;
+            }
+        }
+
+    }
+
+    public class MeshPrimitive : Record
+    {
+        public MeshPrimitive(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+        public override void Parse()
+        {
+            short type = Reader.ReadInt16Big();
+            ushort indexSize = Reader.ReadUInt16Big();
+            uint vertexCount = Reader.ReadUInt32Big();
+            var indices = new int[vertexCount];
+            for (uint i = 0; i < vertexCount; ++i)
+            {
+                if(indexSize == 1)
+                    indices[i] = Reader.ReadChar();
+                if(indexSize == 2)
+                    indices[i] = Reader.ReadInt16Big();
+                if(indexSize == 4)
+                    indices[i] = Reader.ReadInt32Big();
+            }
+
+            var triangles = new int[(vertexCount - 2) * 3];
+            if (type == 1)   // triangle strip
+            {
+                for (int i = 0; i + 2 < indices.Length; ++i)
+                {
+                    if (i % 2 == 1)
+                    {
+                        triangles[(i * 3) + 0] = indices[i + 1];
+                        triangles[(i * 3) + 1] = indices[i + 0];
+                        triangles[(i * 3) + 2] = indices[i + 2];
+                    }
+                    else
+                    {
+                        triangles[(i * 3) + 0] = indices[i + 0];
+                        triangles[(i * 3) + 1] = indices[i + 1];
+                        triangles[(i * 3) + 2] = indices[i + 2];
+                    }
+                }
+            }
+            if (type == 2)   // triangle fan
+            {
+                for (int i = 0; i + 2 < indices.Length; ++i)
+                {
+                    triangles[(i * 3) + 0] = indices[0];
+                    triangles[(i * 3) + 1] = indices[i + 1];
+                    triangles[(i * 3) + 2] = indices[i + 2];
+                }
+            }
+            if (type == 3)   // quad strip
+            {
+                // TODO
+                Console.WriteLine(string.Format("MeshPrimitive record type {0} not yet supported", type));
+            }
+            if (type == 4)  // indexed poly
+            {
+                // TODO
+                Console.WriteLine(string.Format("MeshPrimitive record type {0} not yet supported", type));
+            }
+
+            if (Reader.CurrentMeshRecord != null)
+            {
+                var submesh = Reader.CurrentMeshRecord.Submesh;
+                var offset = Reader.CurrentMeshRecord.LocalVertexPool.paletteOffset;
+                for (int i = 0; i < triangles.Length; ++i)
+                {
+                    int val = triangles[i] + offset;
+                    submesh.triangles.Add(val);
+                    if(Reader.CurrentMeshRecord.drawType == Face.DrawType.DrawSolidNoBackfaceCulling)
+                        submesh.backfaceTriangles.Add(val);
+                }
+            }
+        }
+
+    }
 
     public class Face : Record
     {
@@ -1103,10 +1791,10 @@ namespace Cognitics.OpenFlight
             //    Console.WriteLine("Face: unsupported template " + template.ToString());
             detailTexturePatternIndex = Reader.ReadInt16Big();
             if (detailTexturePatternIndex != -1)
-                Console.WriteLine("Face: unsupported detail texture pattern index specified");
+                Console.WriteLine("Face: detail texture pattern index specified");
             texturePatternIndex = Reader.ReadInt16Big();
-            if (texturePatternIndex == -1)
-                Console.WriteLine("Face: no texture pattern index specified");
+            //if (texturePatternIndex == -1)
+            //    Console.WriteLine("Face: no texture pattern index specified");
             materialIndex = Reader.ReadInt16Big();
             //if (materialIndex == -1)
             //    Console.WriteLine("Face: no material index specified");
@@ -1157,6 +1845,9 @@ namespace Cognitics.OpenFlight
         public Flags flags;
         public double centerX, centerY, centerZ;
         public double transitionRange;
+        public const float multiplier = 1222.310099f; // TODO: this (presumably) assumes 30 degree FOV with 1920 width (2*1920/PI=1222.3)
+
+        // 15.8 - significantSize is used to calculate switch in and out distances based on FOV, screen size, resolution
         public double significantSize;
 
         public enum Flags
@@ -1192,6 +1883,12 @@ namespace Cognitics.OpenFlight
             }
 
             significantSize = Reader.ReadDoubleBig();
+            if (switchInDistance == 0f && switchOutDistance == 0f)
+            {
+                // TODO: at the UnityCDB level, we will need to deal with our FOV and screen resolution to compute the correct value
+                //switchInDistance = significantSize * multiplier;
+                //switchOutDistance = 2f * switchInDistance;
+            }
 
             base.Parse();
         }
@@ -1199,42 +1896,92 @@ namespace Cognitics.OpenFlight
 
     public class VertexList : Record
     {
-        public List<int> offsets = new List<int>();
+        public int[] offsets = null;
 
         public VertexList(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
 
         public override void Parse()
         {
             int count = (Reader.RecordLength - 4) / sizeof(int);
+            offsets = new int[count];
             for (int i = 0; i < count; i++)
-                offsets.Add(Reader.ReadInt32Big());
+                offsets[i] = Reader.ReadInt32Big();
+
+            var idParent = FindParentIdRecord();
+            if (idParent != null)
+            {
+                if (idParent.Submeshes == null)
+                    idParent.InitGeometry();
+
+                if (offsets.Length == 3)
+                {
+                    var face = FindParentFace();
+                    var idRecord = FindParentIdRecord();
+                    var material = Root.GetOrAddMaterial(face);
+                    var submesh = idRecord.GetOrAddSubmesh(material);
+                    foreach (var offset in offsets)
+                    {
+                        VertexWithColor vert = null;
+                        if (Root.VertexPalette.Dict.TryGetValue(offset, out vert))
+                        {
+                            int index = -1;
+                            if (Root.VertexPalette.IndexDict.TryGetValue(vert, out index))
+                            {
+                                submesh.triangles.Add(index);
+                                if (face.drawType == Face.DrawType.DrawSolidNoBackfaceCulling)
+                                    submesh.backfaceTriangles.Add(index);
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    // TODO: handle triangulation on polygons
+                    Console.WriteLine(string.Format("polygon found with {0} vertices. These are not handled yet.", offsets.Length));
+                }
+            }
         }
     }
 
     public class VertexWithColor : Record
     {
-        public ushort nameIndex;
-        public ushort flags;
+        public ushort colorNameIndex;
+        public Flags flags;
         public double x, y, z;
-        public int packedIndex;
+        public byte packedIndexA;
+        public byte packedIndexB;
+        public byte packedIndexG;
+        public byte packedIndexR;
         public uint colorIndex;
+
+        public enum Flags
+        {
+            StartHardEdge = 0,
+            NormalFrozen = 1,
+            NoColor = 2,
+            PackedColor = 3,
+            //Spare = 4-15
+        }
 
         public VertexWithColor(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
 
         public override void Parse()
         {
-            nameIndex = (ushort)Reader.ReadInt16Big();
-            flags = (ushort)Reader.ReadInt16Big();
+            colorNameIndex = (ushort)Reader.ReadInt16Big();
+            flags = (Flags)Reader.ReadInt16Big();
             x = Reader.ReadDoubleBig();
             y = Reader.ReadDoubleBig();
             z = Reader.ReadDoubleBig();
-            packedIndex = Reader.ReadInt32Big();
+            packedIndexA = Reader.ReadByte();
+            packedIndexB = Reader.ReadByte();
+            packedIndexG = Reader.ReadByte();
+            packedIndexR = Reader.ReadByte();
             colorIndex = (uint)Reader.ReadInt32Big();
 
             var vertexPalette = Root.VertexPalette;
-            if (vertexPalette.Offset == 7096)
-                Console.WriteLine("foo");
             vertexPalette.Dict[vertexPalette.Offset] = this;
+            vertexPalette.IndexDict[this] = vertexPalette.List.Count;
+            vertexPalette.List.Add(this);
             vertexPalette.Offset += Reader.RecordLength;
         }
     }
@@ -1247,61 +1994,68 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            nameIndex = (ushort)Reader.ReadInt16Big();
-            flags = (ushort)Reader.ReadInt16Big();
+            colorNameIndex = (ushort)Reader.ReadInt16Big();
+            flags = (Flags)Reader.ReadInt16Big();
             x = Reader.ReadDoubleBig();
             y = Reader.ReadDoubleBig();
             z = Reader.ReadDoubleBig();
             i = Reader.ReadSingleBig();
             j = Reader.ReadSingleBig();
             k = Reader.ReadSingleBig();
-            packedIndex = Reader.ReadInt32Big();
+            packedIndexA = Reader.ReadByte();
+            packedIndexB = Reader.ReadByte();
+            packedIndexG = Reader.ReadByte();
+            packedIndexR = Reader.ReadByte();
             colorIndex = (uint)Reader.ReadInt32Big();
 
             var vertexPalette = Root.VertexPalette;
-            if (vertexPalette.Offset == 7096)
-                Console.WriteLine("foo");
             vertexPalette.Dict[vertexPalette.Offset] = this;
+            vertexPalette.IndexDict[this] = vertexPalette.List.Count;
+            vertexPalette.List.Add(this);
             vertexPalette.Offset += Reader.RecordLength;
         }
     }
 
-    public class VertexWithColorUv : VertexWithColor
+    public class VertexWithColorUV : VertexWithColor
     {
         public float u, v;
 
-        public VertexWithColorUv(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+        public VertexWithColorUV(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
 
         public override void Parse()
         {
-            nameIndex = (ushort)Reader.ReadInt16Big();
-            flags = (ushort)Reader.ReadInt16Big();
+            colorNameIndex = (ushort)Reader.ReadInt16Big();
+            flags = (Flags)Reader.ReadInt16Big();
             x = Reader.ReadDoubleBig();
             y = Reader.ReadDoubleBig();
             z = Reader.ReadDoubleBig();
             u = Reader.ReadSingleBig();
             v = Reader.ReadSingleBig();
-            packedIndex = Reader.ReadInt32Big();
+            packedIndexA = Reader.ReadByte();
+            packedIndexB = Reader.ReadByte();
+            packedIndexG = Reader.ReadByte();
+            packedIndexR = Reader.ReadByte();
             colorIndex = (uint)Reader.ReadInt32Big();
 
             var vertexPalette = Root.VertexPalette;
-            if (vertexPalette.Offset == 7096)
-                Console.WriteLine("foo");
             vertexPalette.Dict[vertexPalette.Offset] = this;
+            vertexPalette.IndexDict[this] = vertexPalette.List.Count;
+            vertexPalette.List.Add(this);
             vertexPalette.Offset += Reader.RecordLength;
         }
     }
 
-    public class VertexWithColorNormalUv : VertexWithColorNormal
+    public class VertexWithColorNormalUV : VertexWithColor
     {
+        public float i, j, k;
         public float u, v;
 
-        public VertexWithColorNormalUv(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+        public VertexWithColorNormalUV(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
 
         public override void Parse()
         {
-            nameIndex = (ushort)Reader.ReadInt16Big();
-            flags = (ushort)Reader.ReadInt16Big();
+            colorNameIndex = (ushort)Reader.ReadInt16Big();
+            flags = (Flags)Reader.ReadInt16Big();
             x = Reader.ReadDoubleBig();
             y = Reader.ReadDoubleBig();
             z = Reader.ReadDoubleBig();
@@ -1310,13 +2064,16 @@ namespace Cognitics.OpenFlight
             k = Reader.ReadSingleBig();
             u = Reader.ReadSingleBig();
             v = Reader.ReadSingleBig();
-            packedIndex = Reader.ReadInt32Big();
+            packedIndexA = Reader.ReadByte();
+            packedIndexB = Reader.ReadByte();
+            packedIndexG = Reader.ReadByte();
+            packedIndexR = Reader.ReadByte();
             colorIndex = (uint)Reader.ReadInt32Big();
 
             var vertexPalette = Root.VertexPalette;
-            if (vertexPalette.Offset == 7096)
-                Console.WriteLine("foo");
             vertexPalette.Dict[vertexPalette.Offset] = this;
+            vertexPalette.IndexDict[this] = vertexPalette.List.Count;
+            vertexPalette.List.Add(this);
             vertexPalette.Offset += Reader.RecordLength;
         }
     }
@@ -1358,16 +2115,47 @@ namespace Cognitics.OpenFlight
             if (File.Exists(path))
             {
                 path = Path.GetFullPath(path);
-                //Console.WriteLine("ExternalReference Path: " + path);
+                //Console.WriteLine(string.Format("External reference for {0} at {1}", Root.Path, path));
                 Stream stream = File.OpenRead(path);
                 var reader = new FltReader(stream);
                 var fltDB = new FltDatabase(this, RecordType.Invalid, reader, path);
                 fltDB.Parse();
+                Root.ExternalDBs.Add(fltDB);
             }
 
             base.Parse();
         }
     }
+
+    //public class ExtendedMaterialHeader : Record
+    //{
+    //    public ExtendedMaterialHeader(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+    //    public override void Parse()
+    //    {
+    //        Console.WriteLine(string.Format("found {0} in {1}", RecordType.ToString(), Root.Path));
+    //    }
+    //}
+
+    //public class MultiTexture : Record
+    //{
+    //    public MultiTexture(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+    //    public override void Parse()
+    //    {
+    //        Console.WriteLine(string.Format("found {0} in {1}", RecordType.ToString(), Root.Path));
+    //    }
+    //}
+
+    //public class UvList : Record
+    //{
+    //    public UvList(Record parent, RecordType recordType, FltReader reader) : base(parent, recordType, reader) {}
+
+    //    public override void Parse()
+    //    {
+    //        Console.WriteLine(string.Format("found {0} in {1}", RecordType.ToString(), Root.Path));
+    //    }
+    //}
 
     #endregion
 }

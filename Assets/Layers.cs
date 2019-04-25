@@ -9,9 +9,10 @@ public class Layers : MonoBehaviour
     public UnityEngine.UI.Toggle template = null;
 
     // TODO: we will want to pull these in dynamically based on an enum or name lookup
-    private readonly string[] layerStrings = new string[2]
+    private readonly string[] layerStrings = new string[3]
     {
         "Structures",
+        "Structures (Geo-specific)",
         "Trees",
     };
 
@@ -33,7 +34,8 @@ public class Layers : MonoBehaviour
                 switch (index)
                 {
                     case 0: toggle.isOn = Database.ManMadeData != null; break;
-                    case 1: toggle.isOn = Database.TreeData != null; break;
+                    case 1: toggle.isOn = Database.ManMadeDataSpecific != null; break;
+                    case 2: toggle.isOn = Database.TreeData != null; break;
                 }
                 gameObj.SetActive(true);
                 index++;
@@ -45,6 +47,7 @@ public class Layers : MonoBehaviour
     {
         if (Database == null)
             return;
+
         int index = toggle.gameObject.transform.GetSiblingIndex() - 1; // subtract 1 for the (deactivated) template that should always be the first sibling
         if (toggle.isOn)
         {
@@ -52,9 +55,10 @@ public class Layers : MonoBehaviour
             switch (index)
             {
                 case 0: Database.InitializeGTFeatureLayer(ref Database.ManMadeData, Database.DB.GTFeature.ManMade, 0); break;
-                case 1: Database.InitializeGTFeatureLayer(ref Database.TreeData, Database.DB.GTFeature.Trees, 0); break;
+                case 1: Database.InitializeGSFeatureLayer(ref Database.ManMadeDataSpecific, Database.DB.GSFeature.ManMade, 0); break;
+                case 2: Database.InitializeGTFeatureLayer(ref Database.TreeData, Database.DB.GTFeature.Trees, 0); break;
                 default:
-                    throw new System.ArgumentOutOfRangeException("index", "invalid GTFeatureData index");
+                    throw new System.ArgumentOutOfRangeException("index", "invalid feature data index" + index);
             }
         }
         else
@@ -63,9 +67,10 @@ public class Layers : MonoBehaviour
             switch (index)
             {
                 case 0: Database.DestroyGTFeatureLayer(ref Database.ManMadeData); break;
-                case 1: Database.DestroyGTFeatureLayer(ref Database.TreeData); break;
+                case 1: Database.DestroyGSFeatureLayer(ref Database.ManMadeDataSpecific); break;
+                case 2: Database.DestroyGTFeatureLayer(ref Database.TreeData); break;
                 default:
-                    throw new System.ArgumentOutOfRangeException("index", "invalid GTFeatureData index");
+                    throw new System.ArgumentOutOfRangeException("index", "invalid feature data index" + index);
             }
         }
     }
