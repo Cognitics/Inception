@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using UnityEngine;
 using Cognitics.OpenFlight;
 using Cognitics.UnityCDB;
+using System.Threading;
 
 public class MaterialEntry
 {
@@ -12,10 +13,15 @@ public class MaterialEntry
     internal Texture2D Texture = null;
     internal int ReferenceCount = 0;
     internal bool Loaded = false;
+    internal int Memory = 0;
+    public CancellationTokenSource TaskLoadToken = new CancellationTokenSource();
 
-    int Width = 1;
-    int Height = 1;
-    Color32[] Pixels = new Color32[1] { new Color32(0, 255, 255, 255) };
+    internal int Width = 1;
+    internal int Height = 1;
+    internal Color32[] Pixels = new Color32[1] { new Color32(0, 255, 255, 255) };
+
+    //internal Cognitics.Unity.SGIReadJob SGIReadJob;
+
 
     internal void TaskLoad(string name)
     {
@@ -62,6 +68,7 @@ public class MaterialEntry
                 Height = fltTexture.Height;
                 Pixels = new Color32[Width * Height];
                 SetPixelsForTexture(fltTexture);
+                Memory = Width * Height * 6;    // 6 = 1.5 * 4 to include mipmapping
             }
 
         }
@@ -115,11 +122,11 @@ public class MaterialEntry
     // Create material with loaded texture and assign to Material
     internal void GenerateMaterial()
     {
-        Texture = new Texture2D(Width, Height, TextureFormat.RGBA32, false);
+        Texture = new Texture2D(Width, Height, TextureFormat.RGBA32, true);
         Texture.wrapMode = TextureWrapMode.Repeat;
         Texture.SetPixels32(Pixels);
         if (MaterialManager.Shader == null)
-            MaterialManager.Shader = Shader.Find("Standard");
+            MaterialManager.Shader = Shader.Find("Cognitics/ModelStandard");
         Material = new UnityEngine.Material(MaterialManager.Shader);
         Material.mainTexture = Texture;
         if (Material.mainTexture != null)
@@ -147,7 +154,7 @@ public class MaterialEntry
 
 public class MaterialManager
 {
-    Dictionary<string, MaterialEntry> MaterialByName = new Dictionary<string, MaterialEntry>();
+    public Dictionary<string, MaterialEntry> MaterialByName = new Dictionary<string, MaterialEntry>();
     public static Shader Shader = null;
 
     public UnityEngine.Material MaterialForName(string name)
@@ -168,11 +175,38 @@ public class MaterialManager
                 return matEntry.Material;
             }
             // TaskLoad in progress
+
+            /*
+            if ((matEntry.SGIReadJob != null) && matEntry.SGIReadJob.IsCompleted)
+            {
+                matEntry.SGIReadJob.Complete();
+                matEntry.Width = matEntry.SGIReadJob.Width;
+                matEntry.Height = matEntry.SGIReadJob.Height;
+                matEntry.Pixels = matEntry.SGIReadJob.Pixels;
+                matEntry.GenerateMaterial();
+                ++matEntry.ReferenceCount;
+                return matEntry.Material;
+            }
+            */
+
             return null;
         }
         var newMatEntry = new MaterialEntry();
         MaterialByName[name] = newMatEntry;
-        Task.Run(() => newMatEntry.TaskLoad(name));
+
+        /*
+        if (Path.GetExtension(name) == ".rgb")
+        {
+            newMatEntry.SGIReadJob = new Cognitics.Unity.SGIReadJob() { Filename = name };
+            newMatEntry.SGIReadJob.Execute();
+            return null;
+        }
+        */
+
+
+        var token = newMatEntry.TaskLoadToken.Token;
+        Task.Run(() => { newMatEntry.TaskLoad(name); }, token);
+
         return null;
     }
 
@@ -194,7 +228,23 @@ public class MaterialManager
                 UnityEngine.Object.Destroy(matEntry.Material.mainTexture);
             UnityEngine.Object.Destroy(matEntry.Material);
         }
+
+        matEntry.TaskLoadToken.Cancel();
+        matEntry.TaskLoadToken.Dispose();
+
         MaterialByName.Remove(name);
+    }
+
+    public long Memory()
+    {
+        long result = 0;
+        foreach (var entry in MaterialByName.Values)
+        {
+            if (entry.Material == null)
+                continue;
+            result += entry.Memory;
+        }
+        return result;
     }
 
 

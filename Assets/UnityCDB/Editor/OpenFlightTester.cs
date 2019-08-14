@@ -8,22 +8,22 @@ public class OpenFlightTester : MonoBehaviour
 {
     public delegate void WalkDelegate(string filename);
 
-    public GameObject UserObject = null;
-    public GameObject cdbPrefab = null;
-    public Database Database = null;
+    public GameObject DatabasePrefab = null;
 
+    private Database Database = null;
     private ModelManager modelManager = null;
     private MaterialManager materialManager = null;
     private MeshManager meshManager = null;
     private List<GameObject> gameObjects = new List<GameObject>();
     private Dictionary<string, Cognitics.OpenFlight.Texture> fltTextures = new Dictionary<string, Cognitics.OpenFlight.Texture>();
     private bool stop = false;
-    private const int stopCount = 100;
+    private const int stopCount = 1000;
+    private bool randomPlacement = false;
 
     private static string LosAngelesCDB => "D:/LosAngeles_CDB";
-    private static string NorthwestCDB1 => "D:/northwest_cdb_part1";
-    private static string NorthwestCDB2 => "D:/northwest_cdb_part2";
+    private static string NorthwestCDB => "D:/northwest_cdb_part1";
     private static string YemenCDB => "D:/CDB_Yemen_4.0.0";
+    private static string MuscatatuckCDB => "D:/MUTC_CDB";
 
     #region MonoBehaviour
 
@@ -31,34 +31,53 @@ public class OpenFlightTester : MonoBehaviour
     {
         ConsoleRedirector.Apply();
 
-        var cdbGameObject = Instantiate(cdbPrefab);
-        Database = cdbGameObject.GetComponent<Database>();
+        //var userObject = GameObject.Find("UserObject");
+
+        string databasePath = YemenCDB;
+        var databaseGameObject = Instantiate(DatabasePrefab);
+        Database = databaseGameObject.GetComponent<Database>();
+        Database.Path = databasePath;
         modelManager = Database.ModelManager;
-        modelManager.UserObject = UserObject;
         materialManager = Database.MaterialManager;
         meshManager = Database.MeshManager;
 
-        var path = YemenCDB + "/GTModel/500_GTModelGeometry";
+        var path = databasePath + "/GTModel/500_GTModelGeometry";
+        //var path = databasePath + "/Tiles";
         var di = new DirectoryInfo(path);
         WalkDirectoryTree(di, LoadFLT);
         int count = gameObjects.Count;
         if (count >= 1)
         {
             int width = (int)Mathf.Sqrt(count);
-            int height = count / width;
+            int length = count / width;
             int remainder = count % width;
             int separation = 100;
-            for (int w = 0; w < width; ++w)
+            if (randomPlacement)
             {
-                for (int h = 0; h < height; ++h)
-                    gameObjects[w * height + h].transform.position = new Vector3(w * separation, 0f, h * separation);
+                foreach (var gameObject in gameObjects)
+                {
+                    gameObject.transform.position = new Vector3(Random.Range(-width * separation / 2, width * separation / 2), 
+                                                                Random.Range(-separation / 2f, separation / 2f), 
+                                                                Random.Range(-length * separation / 2, length * separation / 2));
+                }
             }
-            for (int r = 0; r < remainder; ++r)
-                gameObjects[width * height + r].transform.position = new Vector3(width * separation, 0f, r * separation);
+            else
+            {
+                for (int w = 0; w < width; ++w)
+                {
+                    for (int h = 0; h < length; ++h)
+                        gameObjects[w * length + h].transform.position = new Vector3(w * separation, 0f, h * separation);
+                }
+                for (int r = 0; r < remainder; ++r)
+                    gameObjects[width * length + r].transform.position = new Vector3(width * separation, 0f, r * separation);
+            }
         }
 
-        //modelManager.UserObject.transform.position = new Vector3(-100f, 100f, -100f);
-        //modelManager.UserObject.transform.rotation = Quaternion.LookRotation(new Vector3(1f, -1f, 1f), Vector3.up);
+        foreach (var gameObject in gameObjects)
+            modelManager.Add(gameObject.GetComponent<Model>());
+
+        //userObject.transform.position = new Vector3(-100f, 100f, -100f);
+        //userObject.transform.rotation = Quaternion.LookRotation(new Vector3(1f, -1f, 1f), Vector3.up);
     }
 
     #endregion
@@ -90,8 +109,6 @@ public class OpenFlightTester : MonoBehaviour
 
     private void LoadFLT(string filename)
     {
-        //if (!filename.Contains("D500_S001_T001_AL130_000_cdb_swa_gt_mig17_02"))
-        //    return;
         //if (!filename.Contains("D500_S001_T001_AL015_000_cdb_swa_gt_billboard_03"))
         //    return;
         //if (!filename.Contains("D500_S001_T002_AL015_000_9c71e7b4"))
@@ -102,6 +119,12 @@ public class OpenFlightTester : MonoBehaviour
         //    return;
         //if (!filename.Contains("silo_05"))
         //    return;
+        //if (!filename.Contains("D500_S001_T001_AL130_000_cdb_swa_gt_mig17_02"))
+        //    return;
+        //if (!filename.Contains("D500_S001_T001_AL110_000_cdb_swa_gt_lightpole_01"))
+        //    return;
+        //if (!filename.Contains("D500_S001_T001_AL015_000_cdb_swa_gt_silo_01"))
+        //    return;
 
         var gameObj = new GameObject(filename);
         var model = gameObj.AddComponent<Model>();
@@ -109,10 +132,8 @@ public class OpenFlightTester : MonoBehaviour
         model.ZipFilename = null;
         model.FltFilename = Path.GetFileName(filename);
         model.ModelManager = modelManager;
-        model.ModelManager.Models[model] = new ModelEntry();
         model.MaterialManager = materialManager;
         model.MeshManager = meshManager;
-        model.enabled = false; // skip Update since model manager will do the work
 
         gameObjects.Add(gameObj);
         if (gameObjects.Count == stopCount)
@@ -127,7 +148,6 @@ public class OpenFlightTester : MonoBehaviour
         //    model.ZipFilename = null;
         //    model.FltFilename = Path.GetFileName(filename);
         //    model.ModelManager = modelManager;
-        //    model.ModelManager.Models[model] = new ModelEntry();
         //    model.MaterialManager = materialManager;
         //    model.MeshManager = meshManager;
         //    gameObjects.Add(gameObj);

@@ -1,6 +1,7 @@
 ﻿
 using System;
 using System.Collections.Generic;
+using UnityEngine;
 
 namespace Cognitics.UnityCDB
 {
@@ -13,7 +14,7 @@ namespace Cognitics.UnityCDB
             var reverseTiles = new List<Tile>(tiles);
             reverseTiles.Reverse();
             tiles.ForEach(tile => reverseTiles.ForEach(other => UpdateTileEdges(tile, other)));
-            tiles.ForEach(tile => { tile.GetComponent<UnityEngine.MeshFilter>().mesh.vertices = tile.vertices; });
+            tiles.ForEach(tile => { tile.GetComponent<MeshFilter>().mesh.vertices = tile.vertices; });
         }
 
         ////////////////////////////////////////////////////////////////////////////////

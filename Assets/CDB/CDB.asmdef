@@ -3,7 +3,8 @@
     "references": [
         "CoordinateSystems",
         "CSJ2K",
-        "LibTiff"
+        "LibTiff",
+        "Cognitics"
     ],
     "optionalUnityReferences": [],
     "includePlatforms": [],

@@ -103,7 +103,7 @@ namespace Cognitics.OpenFlight
         ExtendedMaterialReflectionMap = 147,
     }
 
-    public class FltReader : EndianBinaryReader
+    public class FltReader
     {
         public static string GetString(byte[] bytes)
         {
@@ -128,7 +128,9 @@ namespace Cognitics.OpenFlight
 
         public Mesh CurrentMeshRecord = null;
 
-        public FltReader(Stream input) : base(input) { }
+        public BinaryParser BinaryParser;
+
+        public FltReader(BinaryParser input) { BinaryParser = input; }
 
         // Move the file pointer to the start of the next record
         public bool Advance()
@@ -138,42 +140,26 @@ namespace Cognitics.OpenFlight
             else
                 Position += RecordLength;
 
-            if (BaseStream.Length - Position < 4)
+            if (BinaryParser.Bytes.Length - Position < 4)
                 return false;
-            try
-            {
-                BaseStream.Seek(Position, SeekOrigin.Begin);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(string.Format("ERROR: {0}, seek failure", ex.ToString()));
-            }
+            BinaryParser.Position = (int)Position;
             return true;
         }
 
         public Record Process(Record parent, RecordType recordType, FltReader reader)
         {
             NextOpcode();
-            RecordLength = ReadUInt16Big();
+            RecordLength = BinaryParser.UInt16BE();
 
             return CreateRecord(parent, recordType, reader);
         }
 
         public RecordType NextOpcode(bool advance = true)
         {
-            Position = BaseStream.Position;
-            Opcode = (RecordType)ReadUInt16Big();
+            Position = BinaryParser.Position;
+            Opcode = (RecordType)BinaryParser.UInt16BE();
             if (!advance)
-            {
-                try
-                {
-                    BaseStream.Seek(Position, SeekOrigin.Begin);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine(string.Format("ERROR: {0}, seek failure", ex.ToString()));
-                }
-            }
+                BinaryParser.Position = (int)Position;
             return Opcode;
         }
 
@@ -395,110 +381,6 @@ namespace Cognitics.OpenFlight
             return Equals(materialPalette, otherMaterialPalette) &&
                 Equals(mainTexturePalette, otherMainTexturePalette) &&
                 Equals(detailTexturePalette, otherDetailTexturePalette);
-        }
-    }
-
-    public class Texture
-    {
-        public int Width = 0;
-        public int Height = 0;
-        public int NumChannels = 0;
-        public byte[] rgb = null;
-        public string Path = null;
-
-        public Texture(string path)
-        {
-            Path = path;
-        }
-
-        public void Parse(byte[] bytes = null)
-        {
-            if (Path.EndsWith(".rgb"))
-            {
-                var texture = new CDB.SiliconGraphicsImage();
-                rgb = texture.ReadRGB8(Path, bytes, out Width, out Height, out NumChannels);
-            }
-            // TODO: haven't found where in the spec these are actually dealt with (they never seem to be main/detail texture), and the code is preliminary
-            else if (Path.EndsWith(".tif"))
-            {
-                // TODO: read mesh type from channel 1
-
-                string logname = "OpenFlight.Texture.Parse(): " + Path;
-
-                var tiff = Tiff.Open(Path, "r");
-                if (tiff == null)
-                {
-                    Console.WriteLine(logname + ": Tiff.Open() failed");
-                    return;// null;
-                }
-                FieldValue[] value = tiff.GetField(TiffTag.IMAGEWIDTH);
-                Width = value[0].ToInt();
-                value = tiff.GetField(TiffTag.IMAGELENGTH);
-                Height = value[0].ToInt();
-                {
-                    FieldValue[] bitDepth = tiff.GetField(TiffTag.BITSPERSAMPLE);
-                    FieldValue[] dataTypeTag = tiff.GetField(TiffTag.SAMPLEFORMAT);
-                    int bpp = bitDepth[0].ToInt();
-                    NumChannels = bpp / 8;
-                    int dataType = dataTypeTag[0].ToInt();
-
-                    int stride = tiff.ScanlineSize();
-                    byte[] buffer = new byte[stride];
-
-                    var result = new byte[Width * Height];
-
-                    for (int row = 0; row < Height; ++row)
-                    {
-                        if (!tiff.ReadScanline(buffer, row))
-                        {
-                            Console.WriteLine(logname + ": Tiff.ReadScanLine(buffer, " + row.ToString() + ") failed");
-                            break;
-                        }
-
-                        /*// Case of float
-                        if (bpp == 32 && dataType == 3)
-                        {
-                            for (int col = 0; col < Width; ++col)
-                                result[(row * Width) + col] = BitConverter.ToSingle(buffer, col * 4);
-                        }
-                        // case of Int32
-                        else if (bpp == 32 && dataType == 2)
-                        {
-                            for (int col = 0; col < Width; ++col)
-                                result[(row * Width) + col] = BitConverter.ToInt32(buffer, col * 4);
-                        }
-                        // Case of Int16
-                        else if (bpp == 16 && dataType == 2)
-                        {
-                            for (int col = 0; col < Width; ++col)
-                                result[(row * Width) + col] = BitConverter.ToInt16(buffer, col * 2);
-                        }
-                        // Case of Int8
-                        else*/
-                        //{
-                            if (bpp == 8 && (dataType == 1 || dataType == 2))
-                            {
-                                for (int col = 0; col < Width; ++col)
-                                    result[(row * Width) + col] = buffer[col];
-                            }
-                        //}
-                        // Case of Unknown Datatype
-                        else
-                        {
-                            // TODO: fix log. it should be current with what we support.
-                            Console.WriteLine(
-                                logname +
-                                ": Unknown Tiff file format " +
-                                "(bits per pixel:" + bpp.ToString() +
-                                ",  dataType code: " + dataType.ToString() +
-                                "). Expected bpp values: 8, 16, or 32. Expected dataType values: 1 (two's complement signed int), or 3 (IEEE float)."
-                                );
-                        }
-                    }
-
-                    rgb = result;
-                }
-            }
         }
     }
 
@@ -748,10 +630,7 @@ namespace Cognitics.OpenFlight
         public override void Parse()
         {
             base.Parse();
-
             geometryRecords = SelectGeometryRecords();
-
-            Reader.Close();
         }
 
         public Material GetOrAddMaterial(Face face)
@@ -843,6 +722,7 @@ namespace Cognitics.OpenFlight
                                 if (parent != null && parent == idRecord && idRecord2.HasGeometry())
                                 {
                                     _geometryRecords.Add(idRecord2);
+                                    break;
                                 }
                             }
                         }
@@ -975,84 +855,84 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            idStr = FltReader.GetString(Reader.ReadBytes(fixedIdLength));
-            formatRevisionLevel = Reader.ReadInt32Big();
+            idStr = Reader.BinaryParser.String(fixedIdLength);
+            formatRevisionLevel = Reader.BinaryParser.Int32BE();
             if (skipUnusedFields)
                 return;
 
-            editRevisionLevel = Reader.ReadInt32Big();
-            lastRevisionDateTime = FltReader.GetString(Reader.ReadBytes(32));
-            nextGroupNodeId = Reader.ReadInt16Big();
-            nextLodNodeId = Reader.ReadInt16Big();
-            nextObjectNodeId = Reader.ReadInt16Big();
-            nextFaceNodeId = Reader.ReadInt16Big();
-            unitMultiplier = Reader.ReadInt16Big();
-            vertexCoordinateUnits = (VertexCoordinateUnits)Reader.ReadByte();
-            texWhite = Reader.ReadByte();
-            flags = (Flags)Reader.ReadInt32Big();
+            editRevisionLevel = Reader.BinaryParser.Int32BE();
+            lastRevisionDateTime = Reader.BinaryParser.String(32);
+            nextGroupNodeId = Reader.BinaryParser.Int16BE();
+            nextLodNodeId = Reader.BinaryParser.Int16BE();
+            nextObjectNodeId = Reader.BinaryParser.Int16BE();
+            nextFaceNodeId = Reader.BinaryParser.Int16BE();
+            unitMultiplier = Reader.BinaryParser.Int16BE();
+            vertexCoordinateUnits = (VertexCoordinateUnits)Reader.BinaryParser.Byte();
+            texWhite = Reader.BinaryParser.Byte();
+            flags = (Flags)Reader.BinaryParser.Int32BE();
 
-            Reader.ReadBytes(6 * sizeof(int));
+            Reader.BinaryParser.Position += 6 * sizeof(int);
 
-            projectionType = (ProjectionType)Reader.ReadInt32Big();
+            projectionType = (ProjectionType)Reader.BinaryParser.Int32BE();
 
-            Reader.ReadBytes(7 * sizeof(int));
+            Reader.BinaryParser.Position += 7 * sizeof(int);
 
-            nextDofNodeId = Reader.ReadInt16Big();
-            vertexStorageType = Reader.ReadInt16Big();
-            databaseOrigin = (DatabaseOrigin)Reader.ReadInt32Big();
-            southwestX = Reader.ReadDoubleBig();
-            southwestY = Reader.ReadDoubleBig();
-            deltaX = Reader.ReadDoubleBig();
-            deltaY = Reader.ReadDoubleBig();
-            nextSoundNodeId = Reader.ReadInt16Big();
-            nextPathNodeId = Reader.ReadInt16Big();
+            nextDofNodeId = Reader.BinaryParser.Int16BE();
+            vertexStorageType = Reader.BinaryParser.Int16BE();
+            databaseOrigin = (DatabaseOrigin)Reader.BinaryParser.Int32BE();
+            southwestX = Reader.BinaryParser.DoubleBE();
+            southwestY = Reader.BinaryParser.DoubleBE();
+            deltaX = Reader.BinaryParser.DoubleBE();
+            deltaY = Reader.BinaryParser.DoubleBE();
+            nextSoundNodeId = Reader.BinaryParser.Int16BE();
+            nextPathNodeId = Reader.BinaryParser.Int16BE();
 
-            Reader.ReadBytes(2 * sizeof(int));
+            Reader.BinaryParser.Position += 2 * sizeof(int);
 
-            nextClipNodeId = Reader.ReadInt16Big();
-            nextTextNodeId = Reader.ReadInt16Big();
-            nextBspNodeId = Reader.ReadInt16Big();
-            nextSwitchNodeId = Reader.ReadInt16Big();
+            nextClipNodeId = Reader.BinaryParser.Int16BE();
+            nextTextNodeId = Reader.BinaryParser.Int16BE();
+            nextBspNodeId = Reader.BinaryParser.Int16BE();
+            nextSwitchNodeId = Reader.BinaryParser.Int16BE();
 
-            Reader.ReadBytes(1 * sizeof(int));
+            Reader.BinaryParser.Position += 1 * sizeof(int);
 
-            southwestLatitude = Reader.ReadDoubleBig();
-            southwestLongitude = Reader.ReadDoubleBig();
-            northeastLatitude = Reader.ReadDoubleBig();
-            northeastLongitude = Reader.ReadDoubleBig();
-            originLatitude = Reader.ReadDoubleBig();
-            originLongitude = Reader.ReadDoubleBig();
-            lambertUpperLatitude = Reader.ReadDoubleBig();
-            lambertLowerLongitude = Reader.ReadDoubleBig();
-            nextLightSourceNodeId = Reader.ReadInt16Big();
-            nextLightPointNodeId = Reader.ReadInt16Big();
-            nextRoadNodeId = Reader.ReadInt16Big();
-            nextCatNodeId = Reader.ReadInt16Big();
+            southwestLatitude = Reader.BinaryParser.DoubleBE();
+            southwestLongitude = Reader.BinaryParser.DoubleBE();
+            northeastLatitude = Reader.BinaryParser.DoubleBE();
+            northeastLongitude = Reader.BinaryParser.DoubleBE();
+            originLatitude = Reader.BinaryParser.DoubleBE();
+            originLongitude = Reader.BinaryParser.DoubleBE();
+            lambertUpperLatitude = Reader.BinaryParser.DoubleBE();
+            lambertLowerLongitude = Reader.BinaryParser.DoubleBE();
+            nextLightSourceNodeId = Reader.BinaryParser.Int16BE();
+            nextLightPointNodeId = Reader.BinaryParser.Int16BE();
+            nextRoadNodeId = Reader.BinaryParser.Int16BE();
+            nextCatNodeId = Reader.BinaryParser.Int16BE();
 
-            Reader.ReadBytes(4 * sizeof(short));
+            Reader.BinaryParser.Position += 4 * sizeof(short);
 
-            earthEllipsoidModel = (EarthEllipsoidModel)Reader.ReadInt32Big();
-            nextAdaptiveNodeId = Reader.ReadInt16Big();
-            nextCurveNodeId = Reader.ReadInt16Big();
+            earthEllipsoidModel = (EarthEllipsoidModel)Reader.BinaryParser.Int32BE();
+            nextAdaptiveNodeId = Reader.BinaryParser.Int16BE();
+            nextCurveNodeId = Reader.BinaryParser.Int16BE();
             if (formatRevisionLevel < 1580)
                 return;
 
-            utmZone = Reader.ReadInt16Big();
+            utmZone = Reader.BinaryParser.Int16BE();
 
             //Reader.ReadBytes(6);
 
-            //double deltaZ = Reader.ReadDoubleBig();
-            //double radius = Reader.ReadDoubleBig();
-            //ushort nextMeshNodeId = (ushort)Reader.ReadInt16Big();
-            //ushort nextLightPointSystemId = (ushort)Reader.ReadInt16Big();
+            //double deltaZ = Reader.BinaryParser.DoubleBE();
+            //double radius = Reader.BinaryParser.DoubleBE();
+            //ushort nextMeshNodeId = (ushort)Reader.BinaryParser.Int16BE();
+            //ushort nextLightPointSystemId = (ushort)Reader.BinaryParser.Int16BE();
 
             //if (formatRevisionLevel < 1580)
             //    return;
 
             //Reader.ReadBytes(1 * sizeof(int));
 
-            //double earthMajorAxis = Reader.ReadDoubleBig();
-            //double earthMinorAxis = Reader.ReadDoubleBig();
+            //double earthMajorAxis = Reader.BinaryParser.DoubleBE();
+            //double earthMinorAxis = Reader.BinaryParser.DoubleBE();
         }
     }
 
@@ -1064,9 +944,8 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            Reader.ReadInt16Big(); // length
-
-            commentStr = FltReader.GetString(Reader.ReadBytes(Reader.RecordLength - 4));
+            Reader.BinaryParser.Int16BE(); // length
+            commentStr = Reader.BinaryParser.String(Reader.RecordLength - 4);
         }
     }
 
@@ -1078,9 +957,9 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            Reader.ReadInt32Big();
+            Reader.BinaryParser.Int32BE();
 
-            radius = Reader.ReadDoubleBig();
+            radius = Reader.BinaryParser.DoubleBE();
         }
     }
 
@@ -1097,14 +976,14 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            Reader.ReadInt32Big();
+            Reader.BinaryParser.Int32BE();
 
-            minX = Reader.ReadDoubleBig();
-            minY = Reader.ReadDoubleBig();
-            minZ = Reader.ReadDoubleBig();
-            maxX = Reader.ReadDoubleBig();
-            maxY = Reader.ReadDoubleBig();
-            maxZ = Reader.ReadDoubleBig();
+            minX = Reader.BinaryParser.DoubleBE();
+            minY = Reader.BinaryParser.DoubleBE();
+            minZ = Reader.BinaryParser.DoubleBE();
+            maxX = Reader.BinaryParser.DoubleBE();
+            maxY = Reader.BinaryParser.DoubleBE();
+            maxZ = Reader.BinaryParser.DoubleBE();
         }
     }
 
@@ -1118,11 +997,11 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            Reader.ReadInt32Big();
+            Reader.BinaryParser.Int32BE();
 
-            x = Reader.ReadDoubleBig();
-            y = Reader.ReadDoubleBig();
-            z = Reader.ReadDoubleBig();
+            x = Reader.BinaryParser.DoubleBE();
+            y = Reader.BinaryParser.DoubleBE();
+            z = Reader.BinaryParser.DoubleBE();
         }
     }
 
@@ -1136,11 +1015,11 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            Reader.ReadInt32Big();
+            Reader.BinaryParser.Int32BE();
 
-            yaw = Reader.ReadDoubleBig();
-            pitch = Reader.ReadDoubleBig();
-            roll = Reader.ReadDoubleBig();
+            yaw = Reader.BinaryParser.DoubleBE();
+            pitch = Reader.BinaryParser.DoubleBE();
+            roll = Reader.BinaryParser.DoubleBE();
         }
     }
 
@@ -1158,32 +1037,32 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            Reader.ReadBytes(128);
+            Reader.BinaryParser.Position += 128;
 
             for (int i = 0; i < 1024; i++)
             {
                 colors[i].argb = new byte[4];
-                colors[i].argb[0] = Reader.ReadByte();
-                colors[i].argb[1] = Reader.ReadByte();
-                colors[i].argb[2] = Reader.ReadByte();
-                colors[i].argb[3] = Reader.ReadByte();
+                colors[i].argb[0] = Reader.BinaryParser.Byte();
+                colors[i].argb[1] = Reader.BinaryParser.Byte();
+                colors[i].argb[2] = Reader.BinaryParser.Byte();
+                colors[i].argb[3] = Reader.BinaryParser.Byte();
             }
 
             if (Reader.RecordLength > 4228)
             {
-                int colorNameCount = Reader.ReadInt32Big();
+                int colorNameCount = Reader.BinaryParser.Int32BE();
                 for (int i = 0; i < colorNameCount; i++)
                 {
-                    short length = Reader.ReadInt16Big();
+                    short length = Reader.BinaryParser.Int16BE();
 
-                    Reader.ReadInt16Big();
+                    Reader.BinaryParser.Int16BE();
 
-                    short index = Reader.ReadInt16Big();
+                    short index = Reader.BinaryParser.Int16BE();
 
-                    Reader.ReadInt16Big();
+                    Reader.BinaryParser.Int16BE();
 
                     if (index >= 0 && index < colors.Length && length > 8)
-                        colors[index].name = FltReader.GetString(Reader.ReadBytes(length - 8));
+                        colors[index].name = Reader.BinaryParser.String(length - 8);
                 }
             }
         }
@@ -1211,25 +1090,25 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            materialIndex = Reader.ReadInt32Big();
-            materialName = FltReader.GetString(Reader.ReadBytes(12));
-            flags = (Flags)Reader.ReadInt32Big();
-            ambient[0] = Reader.ReadSingleBig();
-            ambient[1] = Reader.ReadSingleBig();
-            ambient[2] = Reader.ReadSingleBig();
-            diffuse[0] = Reader.ReadSingleBig();
-            diffuse[1] = Reader.ReadSingleBig();
-            diffuse[2] = Reader.ReadSingleBig();
-            specular[0] = Reader.ReadSingleBig();
-            specular[1] = Reader.ReadSingleBig();
-            specular[2] = Reader.ReadSingleBig();
-            emissive[0] = Reader.ReadSingleBig();
-            emissive[1] = Reader.ReadSingleBig();
-            emissive[2] = Reader.ReadSingleBig();
-            shininess = Reader.ReadSingleBig();
-            alpha = Reader.ReadSingleBig();
+            materialIndex = Reader.BinaryParser.Int32BE();
+            materialName = Reader.BinaryParser.String(12);
+            flags = (Flags)Reader.BinaryParser.Int32BE();
+            ambient[0] = Reader.BinaryParser.SingleBE();
+            ambient[1] = Reader.BinaryParser.SingleBE();
+            ambient[2] = Reader.BinaryParser.SingleBE();
+            diffuse[0] = Reader.BinaryParser.SingleBE();
+            diffuse[1] = Reader.BinaryParser.SingleBE();
+            diffuse[2] = Reader.BinaryParser.SingleBE();
+            specular[0] = Reader.BinaryParser.SingleBE();
+            specular[1] = Reader.BinaryParser.SingleBE();
+            specular[2] = Reader.BinaryParser.SingleBE();
+            emissive[0] = Reader.BinaryParser.SingleBE();
+            emissive[1] = Reader.BinaryParser.SingleBE();
+            emissive[2] = Reader.BinaryParser.SingleBE();
+            shininess = Reader.BinaryParser.SingleBE();
+            alpha = Reader.BinaryParser.SingleBE();
 
-            Reader.ReadInt32Big();
+            Reader.BinaryParser.Int32BE();
         }
     }
 
@@ -1244,10 +1123,10 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            filename = FltReader.GetString(Reader.ReadBytes(200));
-            texturePatternIndex = Reader.ReadInt32Big();
-            locationX = Reader.ReadInt32Big();
-            locationY = Reader.ReadInt32Big();
+            filename = Reader.BinaryParser.String(200);
+            texturePatternIndex = Reader.BinaryParser.Int32BE();
+            locationX = Reader.BinaryParser.Int32BE();
+            locationY = Reader.BinaryParser.Int32BE();
         }
     }
 
@@ -1263,7 +1142,7 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            Length = Reader.ReadInt32Big() - 8;
+            Length = Reader.BinaryParser.Int32BE() - 8;
 
 
             Offset = 8;
@@ -1303,7 +1182,7 @@ namespace Cognitics.OpenFlight
             for (int i = 0; i < 4; i++)
             {
                 for (int j = 0; j < 4; j++)
-                    matrix[i, j] = Reader.ReadSingleBig();
+                    matrix[i, j] = Reader.BinaryParser.SingleBE();
             }
         }
     }
@@ -1319,7 +1198,7 @@ namespace Cognitics.OpenFlight
             for (int i = 0; i < 4; i++)
             {
                 for (int j = 0; j < 4; j++)
-                    matrix[i, j] = Reader.ReadSingleBig();
+                    matrix[i, j] = Reader.BinaryParser.SingleBE();
             }
         }
     }
@@ -1349,13 +1228,13 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            idStr = FltReader.GetString(Reader.ReadBytes(fixedIdLength));
-            flags = (Flags)Reader.ReadInt32Big();
-            relativePriority = Reader.ReadInt16Big();
-            transparency = (ushort)Reader.ReadInt16Big();
-            specialEffectId1 = Reader.ReadInt16Big();
-            specialEffectId2 = Reader.ReadInt16Big();
-            significance = Reader.ReadInt16Big();
+            idStr = Reader.BinaryParser.String(fixedIdLength);
+            flags = (Flags)Reader.BinaryParser.Int32BE();
+            relativePriority = Reader.BinaryParser.Int16BE();
+            transparency = (ushort)Reader.BinaryParser.Int16BE();
+            specialEffectId1 = Reader.BinaryParser.Int16BE();
+            specialEffectId2 = Reader.BinaryParser.Int16BE();
+            significance = Reader.BinaryParser.Int16BE();
 
             base.Parse();
         }
@@ -1390,19 +1269,19 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            idStr = FltReader.GetString(Reader.ReadBytes(fixedIdLength));
-            relativePriority = Reader.ReadInt16Big();
+            idStr = Reader.BinaryParser.String(fixedIdLength);
+            relativePriority = Reader.BinaryParser.Int16BE();
 
-            Reader.ReadInt16Big();
+            Reader.BinaryParser.Int16BE();
 
-            flags = (Flags)Reader.ReadInt32Big();
-            specialEffectId1 = Reader.ReadInt16Big();
-            specialEffectId2 = Reader.ReadInt16Big();
-            significance = Reader.ReadInt16Big();
-            layerCode = Reader.ReadByte();
+            flags = (Flags)Reader.BinaryParser.Int32BE();
+            specialEffectId1 = Reader.BinaryParser.Int16BE();
+            specialEffectId2 = Reader.BinaryParser.Int16BE();
+            significance = Reader.BinaryParser.Int16BE();
+            layerCode = Reader.BinaryParser.Byte();
 
-            Reader.ReadByte();
-            Reader.ReadInt32Big();
+            Reader.BinaryParser.Byte();
+            Reader.BinaryParser.Int32BE();
 
             if (Root.Header.formatRevisionLevel < 1580)
             {
@@ -1410,9 +1289,9 @@ namespace Cognitics.OpenFlight
                 return;
             }
 
-            loopCount = Reader.ReadInt32Big();
-            loopDurationInSeconds = Reader.ReadSingleBig();
-            lastFrameDurationInSeconds = Reader.ReadSingleBig();
+            loopCount = Reader.BinaryParser.Int32BE();
+            loopDurationInSeconds = Reader.BinaryParser.SingleBE();
+            lastFrameDurationInSeconds = Reader.BinaryParser.SingleBE();
 
             base.Parse();
         }
@@ -1454,43 +1333,43 @@ namespace Cognitics.OpenFlight
         public override void Parse()
         {
             Reader.CurrentMeshRecord = this;
-            idStr = FltReader.GetString(Reader.ReadBytes(8));
-            irColorCode = Reader.ReadInt32Big();
-            Reader.ReadBytes(4);
-            relativePriority = Reader.ReadInt16Big();
-            drawType = (Face.DrawType)Reader.ReadByte();
+            idStr = Reader.BinaryParser.String(8);
+            irColorCode = Reader.BinaryParser.Int32BE();
+            Reader.BinaryParser.Position += 4;
+            relativePriority = Reader.BinaryParser.Int16BE();
+            drawType = (Face.DrawType)Reader.BinaryParser.Byte();
             if (drawType != Face.DrawType.DrawSolidWithBackfaceCulling && drawType != Face.DrawType.DrawSolidNoBackfaceCulling)
                 Console.WriteLine("Face: unsupported draw type " + drawType.ToString());
-            textureWhite = Reader.ReadBoolean();
+            textureWhite = Reader.BinaryParser.Boolean();
             if (textureWhite)
                 Console.WriteLine("Face: unsupported textureWhite");
-            colorNameIndex = (ushort)Reader.ReadInt16Big();
-            alternateColorNameIndex = (ushort)Reader.ReadInt16Big();
-            Reader.ReadBytes(1);
-            template = (Face.Template)Reader.ReadByte();
-            int detailTexturePatternIndex = Reader.ReadInt16Big();
+            colorNameIndex = (ushort)Reader.BinaryParser.Int16BE();
+            alternateColorNameIndex = (ushort)Reader.BinaryParser.Int16BE();
+            Reader.BinaryParser.Position += 1;
+            template = (Face.Template)Reader.BinaryParser.Byte();
+            int detailTexturePatternIndex = Reader.BinaryParser.Int16BE();
             if (detailTexturePatternIndex != -1)
                 Console.WriteLine("Face: detail texture pattern index specified");
-            int texturePatternIndex = Reader.ReadInt16Big();
-            int materialIndex = Reader.ReadInt16Big();
-            surfaceMaterialCode = Reader.ReadInt16Big();
-            featureId = Reader.ReadInt16Big();
-            irMaterialCode = Reader.ReadInt32Big();
-            transparency = (ushort)Reader.ReadInt16Big();
-            lodGenerationControl = Reader.ReadByte();
-            lineStyleIndex = Reader.ReadByte();
-            flags = (Face.Flags)Reader.ReadInt32Big();
-            lightMode = (Face.LightMode)Reader.ReadByte();
-            Reader.ReadBytes(7);
-            packedColorPrimary = (uint)Reader.ReadInt32Big();
-            packedColorAlternate = (uint)Reader.ReadInt32Big();
-            textureMappingIndex = Reader.ReadInt16Big();
-            Reader.ReadInt16Big();
-            primaryColorIndex = Reader.ReadInt32Big();
-            alternateColorIndex = Reader.ReadInt32Big();
-            Reader.ReadInt16Big();
+            int texturePatternIndex = Reader.BinaryParser.Int16BE();
+            int materialIndex = Reader.BinaryParser.Int16BE();
+            surfaceMaterialCode = Reader.BinaryParser.Int16BE();
+            featureId = Reader.BinaryParser.Int16BE();
+            irMaterialCode = Reader.BinaryParser.Int32BE();
+            transparency = (ushort)Reader.BinaryParser.Int16BE();
+            lodGenerationControl = Reader.BinaryParser.Byte();
+            lineStyleIndex = Reader.BinaryParser.Byte();
+            flags = (Face.Flags)Reader.BinaryParser.Int32BE();
+            lightMode = (Face.LightMode)Reader.BinaryParser.Byte();
+            Reader.BinaryParser.Position += 7;
+            packedColorPrimary = (uint)Reader.BinaryParser.Int32BE();
+            packedColorAlternate = (uint)Reader.BinaryParser.Int32BE();
+            textureMappingIndex = Reader.BinaryParser.Int16BE();
+            Reader.BinaryParser.Int16BE();
+            primaryColorIndex = Reader.BinaryParser.Int32BE();
+            alternateColorIndex = Reader.BinaryParser.Int32BE();
+            Reader.BinaryParser.Int16BE();
 
-            shaderIndex = Reader.ReadInt16Big();
+            shaderIndex = Reader.BinaryParser.Int16BE();
 
             var material = Root.GetOrAddMaterial((short)materialIndex, (short)texturePatternIndex, (short)detailTexturePatternIndex);
             Submesh = Root.GetOrAddSubmesh(material);
@@ -1529,8 +1408,8 @@ namespace Cognitics.OpenFlight
             if (Reader.CurrentMeshRecord != null)
                 Reader.CurrentMeshRecord.LocalVertexPool = this;
 
-            uint count = Reader.ReadUInt32Big();
-            uint attr = Reader.ReadUInt32Big();
+            uint count = Reader.BinaryParser.UInt32BE();
+            uint attr = Reader.BinaryParser.UInt32BE();
             hasPosition = (attr & (1 << 31)) > 0;
             hasColor = (attr & (1 << 30)) > 0;
             hasRGBA = (attr & (1 << 29)) > 0;
@@ -1548,57 +1427,57 @@ namespace Cognitics.OpenFlight
                 var vertex = new LocalVertex();
                 if (hasPosition)
                 {
-                    vertex.x = Reader.ReadDoubleBig();
-                    vertex.y = Reader.ReadDoubleBig();
-                    vertex.z = Reader.ReadDoubleBig();
+                    vertex.x = Reader.BinaryParser.DoubleBE();
+                    vertex.y = Reader.BinaryParser.DoubleBE();
+                    vertex.z = Reader.BinaryParser.DoubleBE();
                 }
                 if (hasColor || hasRGBA)
-                    vertex.color = Reader.ReadUInt32Big();
+                    vertex.color = Reader.BinaryParser.UInt32BE();
                 if (hasNormal)
                 {
-                    vertex.i = Reader.ReadSingleBig();
-                    vertex.j = Reader.ReadSingleBig();
-                    vertex.k = Reader.ReadSingleBig();
+                    vertex.i = Reader.BinaryParser.SingleBE();
+                    vertex.j = Reader.BinaryParser.SingleBE();
+                    vertex.k = Reader.BinaryParser.SingleBE();
                 }
                 if (hasBaseUV)
                 {
-                    vertex.u = Reader.ReadSingleBig();
-                    vertex.v = Reader.ReadSingleBig();
+                    vertex.u = Reader.BinaryParser.SingleBE();
+                    vertex.v = Reader.BinaryParser.SingleBE();
                 }
                 if (hasUV1)
                 {
-                    Reader.ReadSingleBig();
-                    Reader.ReadSingleBig();
+                    Reader.BinaryParser.SingleBE();
+                    Reader.BinaryParser.SingleBE();
                 }
                 if (hasUV2)
                 {
-                    Reader.ReadSingleBig();
-                    Reader.ReadSingleBig();
+                    Reader.BinaryParser.SingleBE();
+                    Reader.BinaryParser.SingleBE();
                 }
                 if (hasUV3)
                 {
-                    Reader.ReadSingleBig();
-                    Reader.ReadSingleBig();
+                    Reader.BinaryParser.SingleBE();
+                    Reader.BinaryParser.SingleBE();
                 }
                 if (hasUV4)
                 {
-                    Reader.ReadSingleBig();
-                    Reader.ReadSingleBig();
+                    Reader.BinaryParser.SingleBE();
+                    Reader.BinaryParser.SingleBE();
                 }
                 if (hasUV5)
                 {
-                    Reader.ReadSingleBig();
-                    Reader.ReadSingleBig();
+                    Reader.BinaryParser.SingleBE();
+                    Reader.BinaryParser.SingleBE();
                 }
                 if (hasUV6)
                 {
-                    Reader.ReadSingleBig();
-                    Reader.ReadSingleBig();
+                    Reader.BinaryParser.SingleBE();
+                    Reader.BinaryParser.SingleBE();
                 }
                 if (hasUV7)
                 {
-                    Reader.ReadSingleBig();
-                    Reader.ReadSingleBig();
+                    Reader.BinaryParser.SingleBE();
+                    Reader.BinaryParser.SingleBE();
                 }
                 vertices.Add(vertex);
             }
@@ -1631,18 +1510,18 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            short type = Reader.ReadInt16Big();
-            ushort indexSize = Reader.ReadUInt16Big();
-            uint vertexCount = Reader.ReadUInt32Big();
+            short type = Reader.BinaryParser.Int16BE();
+            ushort indexSize = Reader.BinaryParser.UInt16BE();
+            uint vertexCount = Reader.BinaryParser.UInt32BE();
             var indices = new int[vertexCount];
             for (uint i = 0; i < vertexCount; ++i)
             {
                 if(indexSize == 1)
-                    indices[i] = Reader.ReadChar();
+                    indices[i] = Reader.BinaryParser.Char();
                 if(indexSize == 2)
-                    indices[i] = Reader.ReadInt16Big();
+                    indices[i] = Reader.BinaryParser.Int16BE();
                 if(indexSize == 4)
-                    indices[i] = Reader.ReadInt32Big();
+                    indices[i] = Reader.BinaryParser.Int32BE();
             }
 
             var triangles = new int[(vertexCount - 2) * 3];
@@ -1772,57 +1651,57 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            idStr = FltReader.GetString(Reader.ReadBytes(8));
-            irColorCode = Reader.ReadInt32Big();
-            relativePriority = Reader.ReadInt16Big();
-            drawType = (DrawType)Reader.ReadByte();
+            idStr = Reader.BinaryParser.String(8);
+            irColorCode = Reader.BinaryParser.Int32BE();
+            relativePriority = Reader.BinaryParser.Int16BE();
+            drawType = (DrawType)Reader.BinaryParser.Byte();
             if (drawType != DrawType.DrawSolidWithBackfaceCulling && drawType != DrawType.DrawSolidNoBackfaceCulling)
                 Console.WriteLine("Face: unsupported draw type " + drawType.ToString());
-            textureWhite = Reader.ReadBoolean();
+            textureWhite = Reader.BinaryParser.Boolean();
             if (textureWhite)
                 Console.WriteLine("Face: unsupported textureWhite");
-            colorNameIndex = (ushort)Reader.ReadInt16Big();
-            alternateColorNameIndex = (ushort)Reader.ReadInt16Big();
+            colorNameIndex = (ushort)Reader.BinaryParser.Int16BE();
+            alternateColorNameIndex = (ushort)Reader.BinaryParser.Int16BE();
 
-            Reader.ReadByte();
+            Reader.BinaryParser.Byte();
 
-            template = (Template)Reader.ReadByte();
+            template = (Template)Reader.BinaryParser.Byte();
             //if (template != Template.FixedNoAlphaBlending)
             //    Console.WriteLine("Face: unsupported template " + template.ToString());
-            detailTexturePatternIndex = Reader.ReadInt16Big();
+            detailTexturePatternIndex = Reader.BinaryParser.Int16BE();
             if (detailTexturePatternIndex != -1)
                 Console.WriteLine("Face: detail texture pattern index specified");
-            texturePatternIndex = Reader.ReadInt16Big();
+            texturePatternIndex = Reader.BinaryParser.Int16BE();
             //if (texturePatternIndex == -1)
             //    Console.WriteLine("Face: no texture pattern index specified");
-            materialIndex = Reader.ReadInt16Big();
+            materialIndex = Reader.BinaryParser.Int16BE();
             //if (materialIndex == -1)
             //    Console.WriteLine("Face: no material index specified");
-            surfaceMaterialCode = Reader.ReadInt16Big();
-            featureId = Reader.ReadInt16Big();
-            irMaterialCode = Reader.ReadInt32Big();
-            transparency = (ushort)Reader.ReadInt16Big();
+            surfaceMaterialCode = Reader.BinaryParser.Int16BE();
+            featureId = Reader.BinaryParser.Int16BE();
+            irMaterialCode = Reader.BinaryParser.Int32BE();
+            transparency = (ushort)Reader.BinaryParser.Int16BE();
             if (transparency != 0)
                 Console.WriteLine("Face: unsupported transparency");
-            lodGenerationControl = Reader.ReadByte();
-            lineStyleIndex = Reader.ReadByte();
-            flags = (Flags)Reader.ReadInt32Big();
-            lightMode = (LightMode)Reader.ReadByte();
+            lodGenerationControl = Reader.BinaryParser.Byte();
+            lineStyleIndex = Reader.BinaryParser.Byte();
+            flags = (Flags)Reader.BinaryParser.Int32BE();
+            lightMode = (LightMode)Reader.BinaryParser.Byte();
             //if (lightMode != LightMode.UseVertexColorsNotIlluminated)
             //    Console.WriteLine("Face: unsupported lightMode " + lightMode.ToString());
 
-            Reader.ReadBytes(7);
+            Reader.BinaryParser.Position += 7;
 
-            packedColorPrimary = (uint)Reader.ReadInt32Big();
-            packedColorAlternate = (uint)Reader.ReadInt32Big();
-            textureMappingIndex = Reader.ReadInt16Big();
+            packedColorPrimary = (uint)Reader.BinaryParser.Int32BE();
+            packedColorAlternate = (uint)Reader.BinaryParser.Int32BE();
+            textureMappingIndex = Reader.BinaryParser.Int16BE();
 
-            Reader.ReadInt16Big();
+            Reader.BinaryParser.Int16BE();
 
-            primaryColorIndex = Reader.ReadInt32Big();
-            alternateColorIndex = Reader.ReadInt32Big();
+            primaryColorIndex = Reader.BinaryParser.Int32BE();
+            alternateColorIndex = Reader.BinaryParser.Int32BE();
 
-            Reader.ReadInt16Big();
+            Reader.BinaryParser.Int16BE();
 
             if (Root.Header.formatRevisionLevel < 1600)
             {
@@ -1830,7 +1709,7 @@ namespace Cognitics.OpenFlight
                 return;
             }
 
-            shaderIndex = Reader.ReadInt16Big();
+            shaderIndex = Reader.BinaryParser.Int16BE();
 
             base.Parse();
         }
@@ -1862,19 +1741,19 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            idStr = FltReader.GetString(Reader.ReadBytes(fixedIdLength));
+            idStr = Reader.BinaryParser.String(fixedIdLength);
 
-            Reader.ReadInt32Big();
+            Reader.BinaryParser.Int32BE();
 
-            switchInDistance = Reader.ReadDoubleBig();
-            switchOutDistance = Reader.ReadDoubleBig();
-            specialEffectId1 = Reader.ReadInt16Big();
-            specialEffectId2 = Reader.ReadInt16Big();
-            flags = (Flags)Reader.ReadInt32Big();
-            centerX = Reader.ReadDoubleBig();
-            centerY = Reader.ReadDoubleBig();
-            centerZ = Reader.ReadDoubleBig();
-            transitionRange = Reader.ReadDoubleBig();
+            switchInDistance = Reader.BinaryParser.DoubleBE();
+            switchOutDistance = Reader.BinaryParser.DoubleBE();
+            specialEffectId1 = Reader.BinaryParser.Int16BE();
+            specialEffectId2 = Reader.BinaryParser.Int16BE();
+            flags = (Flags)Reader.BinaryParser.Int32BE();
+            centerX = Reader.BinaryParser.DoubleBE();
+            centerY = Reader.BinaryParser.DoubleBE();
+            centerZ = Reader.BinaryParser.DoubleBE();
+            transitionRange = Reader.BinaryParser.DoubleBE();
 
             if (Root.Header.formatRevisionLevel < 1580)
             {
@@ -1882,7 +1761,7 @@ namespace Cognitics.OpenFlight
                 return;
             }
 
-            significantSize = Reader.ReadDoubleBig();
+            significantSize = Reader.BinaryParser.DoubleBE();
             if (switchInDistance == 0f && switchOutDistance == 0f)
             {
                 // TODO: at the UnityCDB level, we will need to deal with our FOV and screen resolution to compute the correct value
@@ -1905,7 +1784,7 @@ namespace Cognitics.OpenFlight
             int count = (Reader.RecordLength - 4) / sizeof(int);
             offsets = new int[count];
             for (int i = 0; i < count; i++)
-                offsets[i] = Reader.ReadInt32Big();
+                offsets[i] = Reader.BinaryParser.Int32BE();
 
             var idParent = FindParentIdRecord();
             if (idParent != null)
@@ -1967,16 +1846,16 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            colorNameIndex = (ushort)Reader.ReadInt16Big();
-            flags = (Flags)Reader.ReadInt16Big();
-            x = Reader.ReadDoubleBig();
-            y = Reader.ReadDoubleBig();
-            z = Reader.ReadDoubleBig();
-            packedIndexA = Reader.ReadByte();
-            packedIndexB = Reader.ReadByte();
-            packedIndexG = Reader.ReadByte();
-            packedIndexR = Reader.ReadByte();
-            colorIndex = (uint)Reader.ReadInt32Big();
+            colorNameIndex = (ushort)Reader.BinaryParser.Int16BE();
+            flags = (Flags)Reader.BinaryParser.Int16BE();
+            x = Reader.BinaryParser.DoubleBE();
+            y = Reader.BinaryParser.DoubleBE();
+            z = Reader.BinaryParser.DoubleBE();
+            packedIndexA = Reader.BinaryParser.Byte();
+            packedIndexB = Reader.BinaryParser.Byte();
+            packedIndexG = Reader.BinaryParser.Byte();
+            packedIndexR = Reader.BinaryParser.Byte();
+            colorIndex = (uint)Reader.BinaryParser.Int32BE();
 
             var vertexPalette = Root.VertexPalette;
             vertexPalette.Dict[vertexPalette.Offset] = this;
@@ -1994,19 +1873,19 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            colorNameIndex = (ushort)Reader.ReadInt16Big();
-            flags = (Flags)Reader.ReadInt16Big();
-            x = Reader.ReadDoubleBig();
-            y = Reader.ReadDoubleBig();
-            z = Reader.ReadDoubleBig();
-            i = Reader.ReadSingleBig();
-            j = Reader.ReadSingleBig();
-            k = Reader.ReadSingleBig();
-            packedIndexA = Reader.ReadByte();
-            packedIndexB = Reader.ReadByte();
-            packedIndexG = Reader.ReadByte();
-            packedIndexR = Reader.ReadByte();
-            colorIndex = (uint)Reader.ReadInt32Big();
+            colorNameIndex = (ushort)Reader.BinaryParser.Int16BE();
+            flags = (Flags)Reader.BinaryParser.Int16BE();
+            x = Reader.BinaryParser.DoubleBE();
+            y = Reader.BinaryParser.DoubleBE();
+            z = Reader.BinaryParser.DoubleBE();
+            i = Reader.BinaryParser.SingleBE();
+            j = Reader.BinaryParser.SingleBE();
+            k = Reader.BinaryParser.SingleBE();
+            packedIndexA = Reader.BinaryParser.Byte();
+            packedIndexB = Reader.BinaryParser.Byte();
+            packedIndexG = Reader.BinaryParser.Byte();
+            packedIndexR = Reader.BinaryParser.Byte();
+            colorIndex = (uint)Reader.BinaryParser.Int32BE();
 
             var vertexPalette = Root.VertexPalette;
             vertexPalette.Dict[vertexPalette.Offset] = this;
@@ -2024,18 +1903,18 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            colorNameIndex = (ushort)Reader.ReadInt16Big();
-            flags = (Flags)Reader.ReadInt16Big();
-            x = Reader.ReadDoubleBig();
-            y = Reader.ReadDoubleBig();
-            z = Reader.ReadDoubleBig();
-            u = Reader.ReadSingleBig();
-            v = Reader.ReadSingleBig();
-            packedIndexA = Reader.ReadByte();
-            packedIndexB = Reader.ReadByte();
-            packedIndexG = Reader.ReadByte();
-            packedIndexR = Reader.ReadByte();
-            colorIndex = (uint)Reader.ReadInt32Big();
+            colorNameIndex = (ushort)Reader.BinaryParser.Int16BE();
+            flags = (Flags)Reader.BinaryParser.Int16BE();
+            x = Reader.BinaryParser.DoubleBE();
+            y = Reader.BinaryParser.DoubleBE();
+            z = Reader.BinaryParser.DoubleBE();
+            u = Reader.BinaryParser.SingleBE();
+            v = Reader.BinaryParser.SingleBE();
+            packedIndexA = Reader.BinaryParser.Byte();
+            packedIndexB = Reader.BinaryParser.Byte();
+            packedIndexG = Reader.BinaryParser.Byte();
+            packedIndexR = Reader.BinaryParser.Byte();
+            colorIndex = (uint)Reader.BinaryParser.Int32BE();
 
             var vertexPalette = Root.VertexPalette;
             vertexPalette.Dict[vertexPalette.Offset] = this;
@@ -2054,21 +1933,21 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            colorNameIndex = (ushort)Reader.ReadInt16Big();
-            flags = (Flags)Reader.ReadInt16Big();
-            x = Reader.ReadDoubleBig();
-            y = Reader.ReadDoubleBig();
-            z = Reader.ReadDoubleBig();
-            i = Reader.ReadSingleBig();
-            j = Reader.ReadSingleBig();
-            k = Reader.ReadSingleBig();
-            u = Reader.ReadSingleBig();
-            v = Reader.ReadSingleBig();
-            packedIndexA = Reader.ReadByte();
-            packedIndexB = Reader.ReadByte();
-            packedIndexG = Reader.ReadByte();
-            packedIndexR = Reader.ReadByte();
-            colorIndex = (uint)Reader.ReadInt32Big();
+            colorNameIndex = (ushort)Reader.BinaryParser.Int16BE();
+            flags = (Flags)Reader.BinaryParser.Int16BE();
+            x = Reader.BinaryParser.DoubleBE();
+            y = Reader.BinaryParser.DoubleBE();
+            z = Reader.BinaryParser.DoubleBE();
+            i = Reader.BinaryParser.SingleBE();
+            j = Reader.BinaryParser.SingleBE();
+            k = Reader.BinaryParser.SingleBE();
+            u = Reader.BinaryParser.SingleBE();
+            v = Reader.BinaryParser.SingleBE();
+            packedIndexA = Reader.BinaryParser.Byte();
+            packedIndexB = Reader.BinaryParser.Byte();
+            packedIndexG = Reader.BinaryParser.Byte();
+            packedIndexR = Reader.BinaryParser.Byte();
+            colorIndex = (uint)Reader.BinaryParser.Int32BE();
 
             var vertexPalette = Root.VertexPalette;
             vertexPalette.Dict[vertexPalette.Offset] = this;
@@ -2101,14 +1980,14 @@ namespace Cognitics.OpenFlight
 
         public override void Parse()
         {
-            path = FltReader.GetString(Reader.ReadBytes(200));
+            path = Reader.BinaryParser.String(200);
 
-            Reader.ReadInt32Big();
+            Reader.BinaryParser.Int32BE();
 
-            flags = (Flags)Reader.ReadInt32Big();
-            viewAsBoundingBox = Reader.ReadInt16Big();
+            flags = (Flags)Reader.BinaryParser.Int32BE();
+            viewAsBoundingBox = Reader.BinaryParser.Int16BE();
 
-            Reader.ReadInt16Big();
+            Reader.BinaryParser.Int16BE();
 
             var dbPath = Path.GetDirectoryName(Root.Path);
             path = Path.Combine(dbPath, path);
@@ -2116,8 +1995,9 @@ namespace Cognitics.OpenFlight
             {
                 path = Path.GetFullPath(path);
                 //Console.WriteLine(string.Format("External reference for {0} at {1}", Root.Path, path));
-                Stream stream = File.OpenRead(path);
-                var reader = new FltReader(stream);
+                var bytes = System.IO.File.ReadAllBytes(path);
+                var parser = new Cognitics.BinaryParser(bytes);
+                var reader = new FltReader(parser);
                 var fltDB = new FltDatabase(this, RecordType.Invalid, reader, path);
                 fltDB.Parse();
                 Root.ExternalDBs.Add(fltDB);
@@ -2158,4 +2038,117 @@ namespace Cognitics.OpenFlight
     //}
 
     #endregion
+
+
+
+    public class Texture
+    {
+        public int Width = 0;
+        public int Height = 0;
+        public int NumChannels = 0;
+        public byte[] rgb = null;
+        public string Path = null;
+
+        public Texture(string path)
+        {
+            Path = path;
+        }
+
+        public void Parse(byte[] bytes = null)
+        {
+            if (Path.EndsWith(".rgb"))
+            {
+                var texture = new CDB.SiliconGraphicsImage();
+                rgb = texture.ReadRGB8(Path, bytes, out Width, out Height, out NumChannels, true);
+            }
+            // TODO: haven't found where in the spec these are actually dealt with (they never seem to be main/detail texture), and the code is preliminary
+            else if (Path.EndsWith(".tif"))
+            {
+                // TODO: read mesh type from channel 1
+
+                string logname = "OpenFlight.Texture.Parse(): " + Path;
+
+                var tiff = Tiff.Open(Path, "r");
+                if (tiff == null)
+                {
+                    Console.WriteLine(logname + ": Tiff.Open() failed");
+                    return;// null;
+                }
+                FieldValue[] value = tiff.GetField(TiffTag.IMAGEWIDTH);
+                Width = value[0].ToInt();
+                value = tiff.GetField(TiffTag.IMAGELENGTH);
+                Height = value[0].ToInt();
+                {
+                    FieldValue[] bitDepth = tiff.GetField(TiffTag.BITSPERSAMPLE);
+                    FieldValue[] dataTypeTag = tiff.GetField(TiffTag.SAMPLEFORMAT);
+                    int bpp = bitDepth[0].ToInt();
+                    NumChannels = bpp / 8;
+                    int dataType = dataTypeTag[0].ToInt();
+
+                    int stride = tiff.ScanlineSize();
+                    byte[] buffer = new byte[stride];
+
+                    var result = new byte[Width * Height];
+
+                    for (int row = 0; row < Height; ++row)
+                    {
+                        if (!tiff.ReadScanline(buffer, row))
+                        {
+                            Console.WriteLine(logname + ": Tiff.ReadScanLine(buffer, " + row.ToString() + ") failed");
+                            break;
+                        }
+
+                        /*// Case of float
+                        if (bpp == 32 && dataType == 3)
+                        {
+                            for (int col = 0; col < Width; ++col)
+                                result[(row * Width) + col] = BitConverter.ToSingle(buffer, col * 4);
+                        }
+                        // case of Int32
+                        else if (bpp == 32 && dataType == 2)
+                        {
+                            for (int col = 0; col < Width; ++col)
+                                result[(row * Width) + col] = BitConverter.ToInt32(buffer, col * 4);
+                        }
+                        // Case of Int16
+                        else if (bpp == 16 && dataType == 2)
+                        {
+                            for (int col = 0; col < Width; ++col)
+                                result[(row * Width) + col] = BitConverter.ToInt16(buffer, col * 2);
+                        }
+                        // Case of Int8
+                        else*/
+                        //{
+                        if (bpp == 8 && (dataType == 1 || dataType == 2))
+                        {
+                            for (int col = 0; col < Width; ++col)
+                                result[(row * Width) + col] = buffer[col];
+                        }
+                        //}
+                        // Case of Unknown Datatype
+                        else
+                        {
+                            // TODO: fix log. it should be current with what we support.
+                            Console.WriteLine(
+                                logname +
+                                ": Unknown Tiff file format " +
+                                "(bits per pixel:" + bpp.ToString() +
+                                ",  dataType code: " + dataType.ToString() +
+                                "). Expected bpp values: 8, 16, or 32. Expected dataType values: 1 (two's complement signed int), or 3 (IEEE float)."
+                                );
+                        }
+                    }
+
+                    rgb = result;
+                }
+            }
+        }
+    }
+
+
+
+
+
+
+
 }

@@ -2,12 +2,13 @@
 using UnityEngine;
 using UnityEngine.UI;
 using Cognitics.UnityCDB;
+using System.Collections.Generic;
 
 public class Layers : MonoBehaviour
 {
     [HideInInspector] public Database Database = null;
     public UnityEngine.UI.Toggle template = null;
-
+    public List<GameObject> toggleList = new List<GameObject>();
     // TODO: we will want to pull these in dynamically based on an enum or name lookup
     private readonly string[] layerStrings = new string[3]
     {
@@ -16,11 +17,17 @@ public class Layers : MonoBehaviour
         "Trees",
     };
 
-    protected void Start()
+    protected void Start()    {    }
+
+    public void PopulateList()
     {
         if (Database == null)
             return;
-
+        if (toggleList.Count > 0)
+        {
+            RemoveList();
+            return;
+        }
         if (template != null)
         {
             int index = 0;
@@ -38,9 +45,17 @@ public class Layers : MonoBehaviour
                     case 2: toggle.isOn = Database.TreeData != null; break;
                 }
                 gameObj.SetActive(true);
+                toggleList.Add(gameObj);
                 index++;
             }
         }
+    }
+
+    private void RemoveList()
+    {
+        foreach (GameObject g in toggleList)
+            g.SetActive(gameObject.activeSelf);
+        //toggleList.Clear();
     }
 
     public void LayerToggle(UnityEngine.UI.Toggle toggle)

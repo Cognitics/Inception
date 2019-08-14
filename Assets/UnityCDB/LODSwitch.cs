@@ -21,13 +21,17 @@ namespace Cognitics.UnityCDB
             float distance = node.Distance;
             node.InRange = distance < EntryDistanceForLOD(node.Depth);
             if (distance < EntryDistanceForLOD(node.Depth + 1))
+            {
+                if (Database.SystemMemoryLimitExceeded)
+                    return;
                 node.Divide();
+            }
             if (distance > ExitDistanceForLOD(node.Depth + 1))
                 node.Consolidate();
         }
 
         public float EntryDistanceForLOD(int lod) => EntryDistanceByLOD.ContainsKey(lod) ? EntryDistanceByLOD[lod] : float.MinValue;
-        public float ExitDistanceForLOD(int lod) => ExitDistanceByLOD.ContainsKey(lod) ? ExitDistanceByLOD[lod] : float.MaxValue;
+        public float ExitDistanceForLOD(int lod) => ExitDistanceByLOD.ContainsKey(lod) ? ExitDistanceByLOD[lod] : float.MinValue;
 
         public void InitializeDefault(float scale, int maxLOD)
         {

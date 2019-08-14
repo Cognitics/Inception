@@ -48,7 +48,7 @@ namespace Cognitics.CDB
                 FieldValue[] bitDepth = tiff.GetField(TiffTag.BITSPERSAMPLE);
                 FieldValue[] dataTypeTag = tiff.GetField(TiffTag.SAMPLEFORMAT);
                 int bpp = bitDepth[0].ToInt();
-                int dataType = dataTypeTag[0].ToInt();
+                int dataType = ((dataTypeTag != null) && (dataTypeTag.Length > 0)) ? dataTypeTag[0].ToInt() : 2;
 
 
                 int stride = tiff.ScanlineSize();

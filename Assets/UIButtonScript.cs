@@ -4,76 +4,52 @@ using UnityEngine;
 
 public class UIButtonScript: MonoBehaviour
 {
-    private bool isOut = false;
-    private bool lerpOut = false;
-    private bool lerpIn = false;
-    private Vector3 inPosition;
-    private Vector3 outPosition;
-    private float delta;
-    private float speed = 300;
-    public GameObject menuPanel;
-    private MenuPanel menuPanelScript;
+    public GameObject MenuPanel;
+    public GameObject SettingsPanel;
+    public GameObject FeaturePanel;
+    public GameObject POIPanel;
+    private bool panelVisible;
+    private MenuPanel mpScript;
 
-    private void Start()
+    void Start()
     {
-        inPosition = gameObject.transform.position;
-        outPosition = new Vector3(0f, inPosition.y, inPosition.z);
-        delta = 0f;
-        menuPanelScript = menuPanel.GetComponent<MenuPanel>();
+        mpScript = MenuPanel.GetComponent<MenuPanel>();
     }
 
-    private void Update()
+    public void MenuClick()
     {
-        if (menuPanelScript.isOut)
-            return;
-        if (lerpOut)
-        {
-            delta += Time.deltaTime * speed;
-
-            if (delta > 1.0f)
-                delta = 1.0f;
-
-            gameObject.transform.position = Vector3.Lerp(inPosition, outPosition, delta);
-
-            if(delta >= 1.0f)
-            {
-                delta = 0;
-                lerpOut = false;
-                isOut = true;
-            }
-        }
-        if (lerpIn)
-        {
-            delta += Time.deltaTime * speed;
-
-            if (delta > 1.0f)
-                delta = 1.0f;
-
-            gameObject.transform.position = Vector3.Lerp(outPosition, inPosition, delta);
-
-            if(delta >= 1.0f)
-            {
-                delta = 0f;
-                lerpIn = false;
-                isOut = false;
-            }
-
-        }
-        
+        SetActive(MenuPanel);
     }
-    public void Click()
+    
+    public void SettingsClick()
     {
-        if (!isOut)
-        {
-            lerpOut = true;
-            return;
-        }
-        if (isOut)
-        {
-            if (menuPanelScript.isOut)
-                menuPanelScript.lerpIn = true;
-            lerpIn = true;
-            return;
-        }
+        SetActive(SettingsPanel);
+    }
+
+    public void FeatureClick()
+    {
+        SetActive(FeaturePanel);
+    }
+
+    public void POIClick()
+    {
+        SetActive(POIPanel);
+    }
+
+    public void HideChildren()
+    {
+        if(mpScript != null)
+            mpScript.DisablePanels();
+        MenuPanel.SetActive(false);
+        SettingsPanel.SetActive(false);
+        FeaturePanel.SetActive(false);
+        POIPanel.SetActive(false);
+    }
+
+    private void SetActive(GameObject obj)
+    {
+        panelVisible = obj.activeSelf;
+        HideChildren();
+        obj.SetActive(!panelVisible);
     }
 }

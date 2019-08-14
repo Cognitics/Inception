@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using UnityEngine;
 using Cognitics.OpenFlight;
 using Cognitics.UnityCDB;
+using System.Threading;
 
 public class MeshEntry
 {
@@ -12,9 +13,16 @@ public class MeshEntry
     internal List<LODData> Lods = null;
     internal int ReferenceCount = 0;
     internal bool Loaded = false;
+    internal int Memory = 0;
 
     internal List<string> Textures = new List<string>();
     internal Dictionary<int, int> submeshToTexturePatternIndex = new Dictionary<int, int>();
+
+    public CancellationTokenSource TaskLoadToken = new CancellationTokenSource();
+
+    Vector3[] vertices;
+    Vector3[] normals;
+    Vector2[] uvs;
 
     internal void TaskLoad(string name)
     {
@@ -38,8 +46,10 @@ public class MeshEntry
 
             if (zipName == null)
             {
-                Stream stream = File.OpenRead(name);
-                var reader = new FltReader(stream);
+
+                var bytes = System.IO.File.ReadAllBytes(name);
+                var parser = new Cognitics.BinaryParser(bytes);
+                var reader = new FltReader(parser);
                 Flt = new FltDatabase(null, RecordType.Invalid, reader, fltName);
                 Flt.Parse();
             }
@@ -49,11 +59,14 @@ public class MeshEntry
                 ZipReader.DoDecompression(path, zipName, fltName, ref bytes);
                 if (bytes == null)
                 {
-                    Debug.LogErrorFormat("Missing model: {0} {1} {2}", path, zipName, fltName);
+                    // TODO: this log is too spammy for a regular build right now. remove conditional check once that issue is addressed
+                    if (Database.isDebugBuild)
+                        Debug.LogErrorFormat("Missing model: {0} {1} {2}", path, zipName, fltName);
                     Loaded = true;
                     return;
                 }
-                var reader = new FltReader(new MemoryStream(bytes));
+                var parser = new Cognitics.BinaryParser(bytes);
+                var reader = new FltReader(parser);
                 Flt = new FltDatabase(null, RecordType.Invalid, reader, fltName);
                 Flt.Parse();
             }
@@ -93,6 +106,68 @@ public class MeshEntry
         {
             Debug.LogException(e);
         }
+        if ((Flt != null) && (Flt.geometryRecords.Count == 0))
+        {
+            Debug.LogError("[MeshManager] MeshEntry.TaskLoad(): no primary geometry for " + Flt.Path);
+            Flt = null;
+        }
+
+        if (Flt != null)
+        {
+            vertices = new Vector3[Flt.VertexPalette.Dict.Count];
+            normals = new Vector3[Flt.VertexPalette.Dict.Count];
+            uvs = new Vector2[Flt.VertexPalette.Dict.Count];
+
+            int i = 0;
+            foreach (var elem in Flt.VertexPalette.Dict)
+            {
+                var vert = elem.Value;
+                if (vert is VertexWithColorNormal)
+                {
+                    var v = vert as VertexWithColorNormal;
+                    vertices[i].x = (float)v.x;
+                    vertices[i].y = (float)v.z;
+                    vertices[i].z = (float)v.y;
+                    normals[i].x = v.i;
+                    normals[i].y = v.k;
+                    normals[i].z = v.j;
+                    uvs[i] = Vector2.zero;
+                }
+                else if (vert is VertexWithColorNormalUV)
+                {
+                    var v = vert as VertexWithColorNormalUV;
+                    vertices[i].x = (float)v.x;
+                    vertices[i].y = (float)v.z;
+                    vertices[i].z = (float)v.y;
+                    normals[i].x = v.i;
+                    normals[i].y = v.k;
+                    normals[i].z = v.j;
+                    uvs[i].x = v.u;
+                    uvs[i].y = v.v;
+                }
+                else if (vert is VertexWithColorUV)
+                {
+                    var v = vert as VertexWithColorUV;
+                    vertices[i].x = (float)v.x;
+                    vertices[i].y = (float)v.z;
+                    vertices[i].z = (float)v.y;
+                    normals[i] = Vector3.up;
+                    uvs[i].x = v.u;
+                    uvs[i].y = v.v;
+                }
+                else if (vert is VertexWithColor) // base class
+                {
+                    var v = vert as VertexWithColor;
+                    vertices[i].x = (float)v.x;
+                    vertices[i].y = (float)v.z;
+                    vertices[i].z = (float)v.y;
+                    normals[i] = Vector3.up;
+                    uvs[i] = Vector2.zero;
+                }
+
+                ++i;
+            }
+        }
 
         Loaded = true;
     }
@@ -105,70 +180,11 @@ public class MeshEntry
         if (Flt == null)
             return;
 
-        if (Flt.geometryRecords.Count == 0)
-        {
-            Debug.LogError("[MeshManager] MeshEntry.GenerateMesh(): no primary geometry for " + Flt.Path);
-            return;
-        }
-
-        var vertices = new Vector3[Flt.VertexPalette.Dict.Count];
-        var normals = new Vector3[Flt.VertexPalette.Dict.Count];
-        var uvs = new Vector2[Flt.VertexPalette.Dict.Count];
-
-        int i = 0;
-        foreach (var elem in Flt.VertexPalette.Dict)
-        {
-            var vert = elem.Value;
-            if (vert is VertexWithColorNormal)
-            {
-                var v = vert as VertexWithColorNormal;
-                vertices[i].x = (float)v.x;
-                vertices[i].y = (float)v.z;
-                vertices[i].z = (float)v.y;
-                normals[i].x = v.i;
-                normals[i].y = v.k;
-                normals[i].z = v.j;
-                uvs[i] = Vector2.zero;
-            }
-            else if (vert is VertexWithColorNormalUV)
-            {
-                var v = vert as VertexWithColorNormalUV;
-                vertices[i].x = (float)v.x;
-                vertices[i].y = (float)v.z;
-                vertices[i].z = (float)v.y;
-                normals[i].x = v.i;
-                normals[i].y = v.k;
-                normals[i].z = v.j;
-                uvs[i].x = v.u;
-                uvs[i].y = v.v;
-            }
-            else if (vert is VertexWithColorUV)
-            {
-                var v = vert as VertexWithColorUV;
-                vertices[i].x = (float)v.x;
-                vertices[i].y = (float)v.z;
-                vertices[i].z = (float)v.y;
-                normals[i] = Vector3.up;
-                uvs[i].x = v.u;
-                uvs[i].y = v.v;
-            }
-            else if (vert is VertexWithColor) // base class
-            {
-                var v = vert as VertexWithColor;
-                vertices[i].x = (float)v.x;
-                vertices[i].y = (float)v.z;
-                vertices[i].z = (float)v.y;
-                normals[i] = Vector3.up;
-                uvs[i] = Vector2.zero;
-            }
-
-            ++i;
-        }
-
         int lodIndex = 0;
         foreach (var record in Flt.geometryRecords)
         {
             var mesh = new UnityEngine.Mesh();
+            mesh.name = lodIndex.ToString();
             var lodData = new LODData { mesh = mesh };
             Lods.Add(lodData);
             mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
@@ -177,33 +193,49 @@ public class MeshEntry
             var lodRecord = record as LevelOfDetail;
             if (lodRecord != null)
             {
-                //lodData.switchInDistanceSq = (float)lodRecord.switchInDistance * (float)lodRecord.switchInDistance;
-                //lodData.switchOutDistanceSq = (float)lodRecord.switchOutDistance * (float)lodRecord.switchOutDistance;
-
-                lodData.switchInDistanceSq = 2500f * lodIndex * lodIndex;// TEMP - artificial distances for prototyping
-                lodData.switchOutDistanceSq = 2500f * (lodIndex + 1) * (lodIndex + 1);
+                if (lodRecord.significantSize == 0f)
+                {
+                    // significantSize undefined -> pre-15.8
+                    lodData.switchInDistanceSq = (float)lodRecord.switchInDistance * (float)lodRecord.switchInDistance;
+                    lodData.switchOutDistanceSq = (float)lodRecord.switchOutDistance * (float)lodRecord.switchOutDistance;
+                }
+                else
+                {
+                    lodData.CalculateFromSignificantSize((float)lodRecord.significantSize);
+                }
             }
             else
             {
-                //lodData.switchInDistanceSq = 0f;
-                //lodData.switchOutDistanceSq = float.MaxValue;
-
                 lodData.switchInDistanceSq = 2500f * lodIndex * lodIndex;// TEMP - artificial distances for prototyping
                 lodData.switchOutDistanceSq = 2500f * (lodIndex + 1) * (lodIndex + 1);
             }
 
             var submeshes = record.Submeshes;
-            // TODO: this isn't going to work right with LODs
-            submeshes.AddRange(Flt.Submeshes);
-
-            for (i = 0; i < submeshes.Count; ++i)
+            for (int i = 0; i < submeshes.Count; ++i)
             {
                 submeshes[i].triangles.Reverse();
                 submeshes[i].triangles.AddRange(submeshes[i].backfaceTriangles);
             }
 
+            // TODO: this isn't going to work right with LODs
+            submeshes.AddRange(Flt.Submeshes);
+
             GenerateMeshHelper(lodIndex++, submeshes.ToArray(), vertices, normals, uvs);
         }
+
+        // Fix up switch-in distances. They should match the switch-out distances of the next highest quality LOD
+        Lods[0].switchInDistanceSq = 0f;
+        for (int i = 1; i < Lods.Count; ++i)
+            Lods[i].switchInDistanceSq = Lods[i - 1].switchOutDistanceSq;
+
+        Memory += vertices.Length * sizeof(float) * 3;
+        Memory += normals.Length * sizeof(float) * 3;
+        Memory += uvs.Length * sizeof(float) * 2;
+
+        Flt = null;
+        vertices = null;
+        normals = null;
+        uvs = null;
     }
 
     private void GenerateMeshHelper(int lodIndex, Submesh[] submeshes, Vector3[] vertices, Vector3[] normals, Vector2[] uvs)
@@ -242,6 +274,11 @@ public class MeshEntry
                 break;
 
             Lods[lodIndex].mesh.SetTriangles(submeshes[i].triangles, i);
+            Memory += submeshes[i].triangles.Count * sizeof(int);
+
+            // Recalculate bounds if needed.
+            // NOTE: in Unity, bounds are automatically recalculated when triangles are set
+            //Lods[lodIndex].mesh.RecalculateBounds();
         }
     }
 }
@@ -272,7 +309,10 @@ public class MeshManager
         }
         var newEntry = new MeshEntry();
         MeshByName[name] = newEntry;
-        Task.Run(() => newEntry.TaskLoad(name));
+
+        var token = newEntry.TaskLoadToken.Token;
+        Task.Run(() => { newEntry.TaskLoad(name); }, token);
+
         return null;
     }
 
@@ -300,6 +340,23 @@ public class MeshManager
             foreach (var lod in meshEntry.Lods)
                 UnityEngine.Object.Destroy(lod.mesh);
         }
+
+        meshEntry.TaskLoadToken.Cancel();
+        meshEntry.TaskLoadToken.Dispose();
+
         MeshByName.Remove(name);
     }
+
+    public long Memory()
+    {
+        long result = 0;
+        foreach (var entry in MeshByName.Values)
+        {
+            if (entry.Lods == null)
+                continue;
+            result += entry.Memory;
+        }
+        return result;
+    }
+
 }

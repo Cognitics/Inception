@@ -1,7 +1,8 @@
 ﻿
 using UnityEngine;
 using UnityEngine.UI;
-using UnityEngine.EventSystems;
+using UnityEngine.EventSystems;  
+using System.Collections.Generic;
 
 public class ModeButton : MonoBehaviour
 {
@@ -18,6 +19,7 @@ public class ModeButton : MonoBehaviour
     private Camera Camera;
     private GameObject TerrainTester;
     private Cognitics.UnityCDB.SurfaceCollider SurfaceCollider;
+    private bool justSelected = false;
     public bool isDetailMode = false;
 
     // TODO: this should only be visible if a database is loaded
@@ -37,10 +39,15 @@ public class ModeButton : MonoBehaviour
     {
         if (State != StateSelecting)
             return;
-        if (Input.GetKeyDown(KeyCode.Mouse0))
-            HandleSelect(Input.mousePosition);
-        if ((Input.touchCount > 0) && (Input.GetTouch(0).phase == TouchPhase.Began))
-            HandleSelect(Input.GetTouch(0).position);
+        if (justSelected)
+        {
+            justSelected = false;
+            return;
+        }
+        if (Input.GetKeyUp(KeyCode.Mouse0))
+            HandleSelect(Input.mousePosition, false);
+        if ((Input.touchCount > 0) && (Input.GetTouch(0).phase == TouchPhase.Ended))
+            HandleSelect(Input.GetTouch(0).position, true);
     }
 
     void UpdateState(int state)
@@ -65,6 +72,8 @@ public class ModeButton : MonoBehaviour
 
     public void OnClick()
     {
+        if (!justSelected)
+            justSelected = true;
         switch (State)
         {
             case StateOverview: UpdateState(StateSelecting); break;
@@ -81,15 +90,29 @@ public class ModeButton : MonoBehaviour
         Camera.farClipPlane = 50000.0f;
     }
 
-    public void HandleSelect(Vector3 position)
+    private bool IsPointerOverUIObject()
     {
-        if (EventSystem.current.IsPointerOverGameObject())
+        PointerEventData eventDataCurrentPosition = new PointerEventData(EventSystem.current);
+        eventDataCurrentPosition.position = new Vector2(Input.mousePosition.x, Input.mousePosition.y);
+        List<RaycastResult> results = new List<RaycastResult>();
+        EventSystem.current.RaycastAll(eventDataCurrentPosition, results);
+        return results.Count > 0;
+    }
+
+    public void HandleSelect(Vector3 position, bool touch)
+    {
+        if (!touch && EventSystem.current.IsPointerOverGameObject())
+        {
+            UpdateState(StateOverview);
+            return;
+        }
+        if(IsPointerOverUIObject())
         {
             UpdateState(StateOverview);
             return;
         }
         var location = TerrainLocationForPosition(position);
-        if (location == Vector3.positiveInfinity)
+        if (float.IsInfinity(location.x))
         {
             UpdateState(StateOverview);
             return;

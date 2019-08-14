@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
 using Cognitics.CoordinateSystems;
+using System.Threading;
 
 namespace Cognitics.UnityCDB
 {
@@ -61,9 +62,11 @@ namespace Cognitics.UnityCDB
         public bool IsDistanceTesting = false;
         public bool IsDistanceTested = false;
         public float Distance = float.MaxValue;
-        private DateTime lastDistanceTest = DateTime.MinValue;
+        private float lastDistanceTest = Time.time;
 
         public List<QuadTreeNode> Children = new List<QuadTreeNode>();
+
+        [HideInInspector] public CancellationTokenSource TaskLoadToken = new CancellationTokenSource();
 
         public QuadTreeNode(QuadTree root, int depth, GeographicBounds bounds)
         {
@@ -73,15 +76,6 @@ namespace Cognitics.UnityCDB
         }
 
         public void AddChild(GeographicBounds bounds) => Children.Add(new QuadTreeNode(Root, Depth + 1, bounds));
-
-        public List<QuadTreeNode> ActiveTiles()
-        {
-            var result = new List<QuadTreeNode>();
-            if (IsActive)
-                result.Add(this);
-            Children.ForEach(child => result.AddRange(child.ActiveTiles()));
-            return result;
-        }
 
         public void Divide()
         {
@@ -205,9 +199,9 @@ namespace Cognitics.UnityCDB
             if (IsDistanceTesting)
                 return HasChildren();
 
-            if ((DateTime.Now - lastDistanceTest).TotalSeconds < 4)
+            if (Time.time - lastDistanceTest < 4f)
                 return HasChildren();
-            lastDistanceTest = DateTime.Now;
+            lastDistanceTest = Time.time;
             IsDistanceTesting = true;
             IsDistanceTested = false;
             Task.Run(() => TaskDistanceTest());

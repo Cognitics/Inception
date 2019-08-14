@@ -1,5 +1,5 @@
-﻿
-using UnityEngine;
+﻿using UnityEngine;
+using UnityEngine.UI;
 using Cognitics.CoordinateSystems;
 
 public class CameraPosition : MonoBehaviour
@@ -15,15 +15,18 @@ public class CameraPosition : MonoBehaviour
     float dt = 0.0F;
     float fps = 0.0F;
 
+    const float textUpdateInterval = 0.1f;
+    float lastTextUpdateTime = 0f;
+
     CartesianCoordinates cartesianCoordinates = new CartesianCoordinates();
 
-    UnityEngine.UI.Text uiText;
+    Text uiText = null;
     string format = "{0}{1:##0.0000}  {2}{3:###0.0000}   {4:###0.00}   {5:##0.0}°  {6:#0.0} FPS";
 
 
     void Awake()
     {
-        uiText = GetComponentInChildren<UnityEngine.UI.Text>();
+        uiText = GetComponentInChildren<Text>();
     }
 
     void Update()
@@ -44,11 +47,16 @@ public class CameraPosition : MonoBehaviour
         position.y = UserObject.transform.position.y / (float)Projection.Scale;
         position.z = (float)geographicCoordinates.Latitude;
 
-        char latChar = (position.z < 0) ? 'S' : 'N';
-        char lonChar = (position.x < 0) ? 'W' : 'E';
-        float lat = (position.z < 0) ? -position.z : position.z;
-        float lon = (position.x < 0) ? -position.x : position.x;
-        float heading = UserObject.transform.rotation.eulerAngles.y;
-        uiText.text = string.Format(format, latChar, lat, lonChar, lon, position.y, heading, fps);
+        // TODO: string.Format generates a lot of garbage, so until we stop using it, we just throttle to a reasonable level
+        if (Time.time - lastTextUpdateTime > textUpdateInterval)
+        {
+            char latChar = (position.z < 0) ? 'S' : 'N';
+            char lonChar = (position.x < 0) ? 'W' : 'E';
+            float lat = (position.z < 0) ? -position.z : position.z;
+            float lon = (position.x < 0) ? -position.x : position.x;
+            float heading = UserObject.transform.rotation.eulerAngles.y;
+            uiText.text = string.Format(format, latChar, lat, lonChar, lon, position.y, heading, fps);
+            lastTextUpdateTime = Time.time;
+        }
     }
 }

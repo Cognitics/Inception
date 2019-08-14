@@ -43,6 +43,45 @@ namespace Cognitics.CoordinateSystems
             return new CartesianCoordinates(x, y);
         }
 
+        public void TransformToCartesian(double latitude, double longitude, out double x, out double y)
+        {
+            x = (longitude - Origin.Longitude) * scaleAtOriginLatitudeInMeters;
+            y = (latitude - Origin.Latitude) * metersPerDegree;
+        }
+
+        public void TransformToGeographic(double x, double y, out double latitude, out double longitude)
+        {
+            latitude = Origin.Latitude + (y / metersPerDegree);
+            longitude = Origin.Longitude + (x / scaleAtOriginLatitudeInMeters);
+        }
+
+
+        public void Transform(Latitude latitude, Longitude longitude, out double x, out double y)
+        {
+            x = (longitude - Origin.Longitude) * scaleAtOriginLatitudeInMeters;
+            y = (latitude - Origin.Latitude) * metersPerDegree;
+        }
+
+        public void Transform(double x, double y, out Latitude latitude, out Longitude longitude)
+        {
+            latitude = Origin.Latitude + (y / metersPerDegree);
+            longitude = Origin.Longitude + (x / scaleAtOriginLatitudeInMeters);
+        }
+
+        public void Transform(GeographicCoordinates geographicCoordinates, out CartesianCoordinates cartesianCoordinates)
+        {
+            cartesianCoordinates.X = (geographicCoordinates.Longitude - Origin.Longitude) * scaleAtOriginLatitudeInMeters;
+            cartesianCoordinates.Y = (geographicCoordinates.Latitude - Origin.Latitude) * metersPerDegree;
+        }
+
+        public void Transform(CartesianCoordinates cartesianCoordinates, out GeographicCoordinates geographicCoordinates)
+        {
+            geographicCoordinates.Latitude = Origin.Latitude + (cartesianCoordinates.Y / metersPerDegree);
+            geographicCoordinates.Longitude = Origin.Longitude + (cartesianCoordinates.X / scaleAtOriginLatitudeInMeters);
+        }
+
 
     }
 }
+
+

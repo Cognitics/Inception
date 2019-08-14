@@ -28,7 +28,7 @@ public class FilePanel_SelectCDB : MonoBehaviour
     public GameObject LayersCanvas = null;
     public GameObject DebugCanvas = null;
     private Text DebugPanelText = null;
-    private DateTime LastDebugUpdate = DateTime.MinValue;
+    private float LastDebugUpdate = 0f;
 
     private ApplicationState ApplicationState = null;
 
@@ -77,14 +77,6 @@ public class FilePanel_SelectCDB : MonoBehaviour
 
         cdbGameObject = Instantiate(cdbPrefab);
         cdbDatabase = cdbGameObject.GetComponent<Database>();
-        if (path.Contains("northwest_cdb"))
-        {
-            var duetgo = GameObject.Find("DUET");
-            var duet = duetgo.GetComponent<DUET>();
-            duet.Database = cdbDatabase;
-            cdbDatabase.GeographicBounds = new GeographicBounds(new GeographicCoordinates(47, -123), new GeographicCoordinates(48, -122));
-        }
-
         if (ApplicationState.GeographicBounds != GeographicBounds.EmptyValue)
             cdbDatabase.GeographicBounds = ApplicationState.GeographicBounds;
         if (ApplicationState.StartPosition != Vector3.negativeInfinity)
@@ -94,27 +86,47 @@ public class FilePanel_SelectCDB : MonoBehaviour
         if (ApplicationState.StartLOD != int.MinValue)
             cdbLOD = ApplicationState.StartLOD;
 
+        var yemen_hg_go = GameObject.Find("Yemen HG");
+        if (yemen_hg_go != null)
+        {
+            var yemen_hg = yemen_hg_go.GetComponent<YemenHG>();
+            yemen_hg.UDatabase = cdbDatabase;
+        }
 
         cdbDatabase.Initialize(path);
         cdbDatabase.name = cdbDatabase.DB.Name;
         directoryViewButton.GetComponentsInChildren<Text>()[0].text = cdbDatabase.name;
         cdbDatabase.GenerateTerrainForLOD(cdbLOD);
+
         if (!cdbDatabase.Exists)
             return;
+        if (path.Contains("northwest_cdb"))
+        {
+            var duetgo = GameObject.Find("DUET");
+            var duet = duetgo.GetComponent<DUET>();
+            duet.TerrainElevationDelegate = cdbDatabase.TerrainElevationAtLocation;
+            duet.OriginLatitude = cdbDatabase.OriginLatitude;
+            duet.OriginLongitude = cdbDatabase.OriginLongitude;
+            duet.Scale = cdbDatabase.Projection.Scale;
+        }
 
         if (cdbDatabase.name.Contains("northwest_cdb") && NorthwestCDB_Buttons != null)
             NorthwestCDB_Buttons.SetActive(true);
+
+
+        ApplicationState.cdbDatabase = cdbDatabase;
+
+
         UserPositionCanvas.transform.Find("PositionPanel").GetComponent<CameraPosition>().Projection = cdbDatabase.Projection;
         UserPositionCanvas.SetActive(true);
-        if (OptionsCanvas != null)
-        {
-            OptionsCanvas.GetComponent<Options>().Database = cdbDatabase;
-            OptionsCanvas.GetComponent<Options>().OnMaxLodSliderChanged();
-            OptionsCanvas.GetComponent<Options>().OnSpeedSliderChanged();
-        }
         if (LayersCanvas != null)
         {
             LayersCanvas.GetComponent<Layers>().Database = cdbDatabase;
+        }
+        if (OptionsCanvas != null)
+        {
+            OptionsCanvas.GetComponent<Options>().Database = cdbDatabase;
+            OptionsCanvas.GetComponent<Options>().OnSpeedSliderChanged();
         }
         UserObject.GetComponent<SurfaceCollider>().Database = cdbDatabase;
         UserObject.GetComponent<VertexSelector>().terrainTester.GetComponent<SurfaceCollider>().Database = cdbDatabase;
@@ -187,20 +199,38 @@ public class FilePanel_SelectCDB : MonoBehaviour
 
         if (DebugCanvas.activeInHierarchy)
         {
-            if ((DateTime.Now - LastDebugUpdate).TotalSeconds < 1)
+            if (Time.time - LastDebugUpdate < 1f)
                 return;
-            LastDebugUpdate = DateTime.Now;
+            LastDebugUpdate = Time.time;
             string debugText = "";
+            debugText += string.Format("SYSMEMF: {0:0.000}\n", cdbDatabase.SystemMemoryUtilization);
+            debugText += string.Format("SHMEMF: {0:0.000}\n", cdbDatabase.SharedMemoryUtilization);
+            debugText += string.Format("MATM MEM: {0}\n", ByteCountString(cdbDatabase.MaterialManager.Memory()));
+            debugText += string.Format("MSHM MEM: {0}\n", ByteCountString(cdbDatabase.MeshManager.Memory()));
             debugText += string.Format("GC MEM: {0}\n", ByteCountString(System.GC.GetTotalMemory(false)));
             debugText += string.Format("Tex MEM: {0}\n", ByteCountString((long)Texture.currentTextureMemory));
             debugText += string.Format("TMEM ALL: {0}\n", ByteCountString(cdbDatabase.TerrainMemory(false)));
             debugText += string.Format("TMEM ACT: {0}\n", ByteCountString(cdbDatabase.TerrainMemory(true)));
             debugText += string.Format("Vertices: {0}\n", cdbDatabase.VertexCount());
             debugText += string.Format("Triangles: {0}\n", cdbDatabase.TriangleCount());
-            debugText += string.Format("Models: {0}\n", cdbDatabase.ModelCount());
             debugText += string.Format("TDC Waiting: {0}\n", cdbDatabase.TileDataCache.WaitingRequests.Count);
             debugText += string.Format("TDC Running: {0}\n", cdbDatabase.TileDataCache.RunningRequests.Count);
             debugText += string.Format("TDC Entries: {0}\n", cdbDatabase.TileDataCache.Entries.Count);
+            if (cdbDatabase.ManMadeDataSpecific != null)
+            {
+                debugText += string.Format("GSS Features: {0}\n", cdbDatabase.ManMadeDataSpecific.FeatureCount());
+                debugText += string.Format("GSS Models: {0}\n", cdbDatabase.ManMadeDataSpecific.ModelCount());
+            }
+            if (cdbDatabase.ManMadeData != null)
+            {
+                debugText += string.Format("GTS Features: {0}\n", cdbDatabase.ManMadeData.FeatureCount());
+                debugText += string.Format("GTS Models: {0}\n", cdbDatabase.ManMadeData.ModelCount());
+            }
+            if (cdbDatabase.TreeData != null)
+            {
+                debugText += string.Format("GTT Features: {0}\n", cdbDatabase.TreeData.FeatureCount());
+                debugText += string.Format("GTT Models: {0}\n", cdbDatabase.TreeData.ModelCount());
+            }
             DebugPanelText.text = debugText;
         }
     }

@@ -24,32 +24,35 @@ namespace Cognitics.CDB
             numChannels = 0;
 
             byte[] bytes = File.ReadAllBytes(filename);
+
             Stream stream = new MemoryStream(bytes);
-            EndianBinaryReader SGIReader = new EndianBinaryReader(stream);
+
+            BinaryParser SGIReader = new BinaryParser(bytes);
 
             /** Read Header **/
-            short magic = SGIReader.ReadInt16Big();    // 474
-            if(magic != 474)
+            short magic = SGIReader.Int16BE();    // 474
+
+            if (magic != 474)
             {
                 Console.WriteLine(string.Format("file {0} does not match SGI format specifications. The file type declared in the header is not SGI.", filename));
                 return null;
             }
 
-            Storage = SGIReader.ReadSByte();                 // 0 or 1: 0 -> Verbatim, 1 -> Run Length Encoding
-            BytesPerPixelComponent = SGIReader.ReadSByte();  // 1 or 2: 1 -> 1 byte per component, 2 -> 2 bytes per component
-            Dimension = SGIReader.ReadUInt16Big();          // 1, 2, or 3 -> Number of Channels (Max 3, see ZSIZE)
-            xSize = SGIReader.ReadUInt16Big();              // Column Size
-            ySize = SGIReader.ReadUInt16Big();              // Row Size
-            zSize = SGIReader.ReadUInt16Big();              // Number of channels (can be any value)
+            Storage = (sbyte)SGIReader.Byte();                 // 0 or 1: 0 -> Verbatim, 1 -> Run Length Encoding
+            BytesPerPixelComponent = (sbyte)SGIReader.Byte();  // 1 or 2: 1 -> 1 byte per component, 2 -> 2 bytes per component
+            Dimension = SGIReader.UInt16BE();          // 1, 2, or 3 -> Number of Channels (Max 3, see ZSIZE)
+            xSize = SGIReader.UInt16BE();              // Column Size
+            ySize = SGIReader.UInt16BE();              // Row Size
+            zSize = SGIReader.UInt16BE();              // Number of channels (can be any value)
             width = xSize;
             height = ySize;
-            PixMin = SGIReader.ReadInt32Big();              // Min pixel value (e.g. 0)
-            PixMax = SGIReader.ReadInt32Big();              // Max pixel value (e.g. 255)
+            PixMin = SGIReader.Int32BE();              // Min pixel value (e.g. 0)
+            PixMax = SGIReader.Int32BE();              // Max pixel value (e.g. 255)
             //var EmptySpace = new string(SGIReader.ReadChars(4));
-            SGIReader.ReadChars(4);
-            //ImageName = OpenFlight.FltReader.GetString(SGIReader.ReadBytes(80));
-            SGIReader.ReadBytes(80);
-            ColorMapID = SGIReader.ReadInt32Big();          // used for Run Length Encoding
+            SGIReader.Position += 4;          //.ReadChars(4);
+            //ImageName = SGIReader.String(80);
+            SGIReader.Position += 80;
+            ColorMapID = SGIReader.Int32BE();          // used for Run Length Encoding
             if (ColorMapID != 0)
             {
                 Console.WriteLine(string.Format("unsupported color map id {0} in file {1}", ColorMapID, filename));
@@ -57,7 +60,7 @@ namespace Cognitics.CDB
             }
 
             //var Dummy = new string(SGIReader.ReadChars(404));
-            SGIReader.ReadBytes(404);
+            SGIReader.Position += 404;
 
             if (Dimension == 1)
                 numChannels = 1;
@@ -83,7 +86,7 @@ namespace Cognitics.CDB
                 {
                     for (int offset = channel; offset < ImageLength; offset += numChannels)
                     {
-                        float fval = BytesPerPixelComponent == 1 ? SGIReader.ReadByte() : SGIReader.ReadInt16Big();
+                        float fval = BytesPerPixelComponent == 1 ? SGIReader.Byte() : SGIReader.Int16BE();
                         imageDataFloat[offset] = fval;
                     }
                 }
@@ -100,7 +103,7 @@ namespace Cognitics.CDB
                     for (int scanline = 0; scanline < numScanlines; ++scanline)
                     {
                         //startTable[channel, scanline] = SGIReader.ReadUInt32Big();
-                        SGIReader.ReadUInt32Big();
+                        SGIReader.UInt32BE();
                     }
                 }
 
@@ -112,15 +115,14 @@ namespace Cognitics.CDB
                     for (int scanline = 0; scanline < numScanlines; ++scanline)
                     {
                         //lengthTable[channel, scanline] = SGIReader.ReadUInt32Big();
-                        SGIReader.ReadUInt32Big();
+                        SGIReader.UInt32BE();
                     }
                 }
                 // RLE data
                 if (BytesPerPixelComponent == 1)
                 {
-                    int size = (int)SGIReader.BaseStream.Length - (int)SGIReader.BaseStream.Position;
-                    byte[] byteArray = SGIReader.ReadBytes(size);
-                    int inputIndex = 0;
+                    byte[] byteArray = SGIReader.Bytes;
+                    int inputIndex = SGIReader.Position;
                     int outputIndex = 0;
 
                     while (outputIndex < imageDataFloat.Length)
@@ -184,14 +186,13 @@ namespace Cognitics.CDB
             return imageDataFloat;
         }
 
-        public byte[] ReadRGB8(string filename, byte[] bytes, out int width, out int height, out int numChannels)
+        public byte[] ReadRGB8(string filename, byte[] bytes, out int width, out int height, out int numChannels, bool downSample = false)
         {
             width = 0;
             height = 0;
             numChannels = 0;
 
             Stream stream = null;
-            EndianBinaryReader SGIReader = null;
             if (bytes == null)
             {
                 try
@@ -205,31 +206,34 @@ namespace Cognitics.CDB
                 }
             }
             stream = new MemoryStream(bytes);
-            SGIReader = new EndianBinaryReader(stream);
+
+            BinaryParser SGIReader = new BinaryParser(bytes);
 
             /** Read Header **/
-            short magic = SGIReader.ReadInt16Big();    // 474
+            short magic = SGIReader.Int16BE();    // 474
+
+
             if (magic != 474)
             {
                 Console.WriteLine(string.Format("file {0} does not match SGI format specifications. The file type declared in the header is not SGI.", filename));
                 return null;
             }
 
-            Storage = SGIReader.ReadSByte();                 // 0 or 1: 0 -> Verbatim, 1 -> Run Length Encoding
-            BytesPerPixelComponent = SGIReader.ReadSByte();  // 1 or 2: 1 -> 1 byte per component, 2 -> 2 bytes per component
-            Dimension = SGIReader.ReadUInt16Big();          // 1, 2, or 3 -> Number of Channels (Max 3, see ZSIZE)
-            xSize = SGIReader.ReadUInt16Big();              // Column Size
-            ySize = SGIReader.ReadUInt16Big();              // Row Size
-            zSize = SGIReader.ReadUInt16Big();              // Number of channels (can be any value)
+            Storage = (sbyte)SGIReader.Byte();                 // 0 or 1: 0 -> Verbatim, 1 -> Run Length Encoding
+            BytesPerPixelComponent = (sbyte)SGIReader.Byte();  // 1 or 2: 1 -> 1 byte per component, 2 -> 2 bytes per component
+            Dimension = SGIReader.UInt16BE();          // 1, 2, or 3 -> Number of Channels (Max 3, see ZSIZE)
+            xSize = SGIReader.UInt16BE();              // Column Size
+            ySize = SGIReader.UInt16BE();              // Row Size
+            zSize = SGIReader.UInt16BE();              // Number of channels (can be any value)
             width = xSize;
             height = ySize;
-            PixMin = SGIReader.ReadInt32Big();              // Min pixel value (e.g. 0)
-            PixMax = SGIReader.ReadInt32Big();              // Max pixel value (e.g. 255)
+            PixMin = SGIReader.Int32BE();              // Min pixel value (e.g. 0)
+            PixMax = SGIReader.Int32BE();              // Max pixel value (e.g. 255)
             //var EmptySpace = new string(SGIReader.ReadChars(4));
-            SGIReader.ReadChars(4);
+            SGIReader.Position += 4;          //.ReadChars(4);
             //ImageName = OpenFlight.FltReader.GetString(SGIReader.ReadBytes(80));
-            SGIReader.ReadBytes(80);
-            ColorMapID = SGIReader.ReadInt32Big();          // used for Run Length Encoding
+            SGIReader.Position += 80;
+            ColorMapID = SGIReader.Int32BE();          // used for Run Length Encoding
             if (ColorMapID != 0)
             {
                 Console.WriteLine(string.Format("unsupported color map id {0} in file {1}", ColorMapID, filename));
@@ -237,7 +241,7 @@ namespace Cognitics.CDB
             }
 
             //var Dummy = new string(SGIReader.ReadChars(404));
-            SGIReader.ReadBytes(404);
+            SGIReader.Position += 404;
 
             if (Dimension == 1)
                 numChannels = 1;
@@ -267,7 +271,7 @@ namespace Cognitics.CDB
                         //If it's a 16 bit value, for now we'll just ignore the least significant byte
                         try
                         {
-                            byte fval = BytesPerPixelComponent == 1 ? SGIReader.ReadByte() : (byte)(SGIReader.ReadInt16Big()>>8);
+                            byte fval = BytesPerPixelComponent == 1 ? SGIReader.Byte() : (byte)(SGIReader.Int16BE()>>8);
                             imageDataRGB8[offset] = fval;
                         }
                         catch (Exception)// ex)
@@ -281,9 +285,8 @@ namespace Cognitics.CDB
                         break;
                 }
             }
-            else // RLE
+            else// RLE
             {
-                
                 // TODO: leverage start offset and length tables if and when we have data that uses them
                 // Table of start offsets
                 int numScanlines = ySize;
@@ -294,10 +297,9 @@ namespace Cognitics.CDB
                     for (int scanline = 0; scanline < numScanlines; ++scanline)
                     {
                         //startTable[channel, scanline] = SGIReader.ReadUInt32Big();
-                        SGIReader.ReadUInt32Big();
+                        SGIReader.UInt32BE();
                     }
                 }
-                
 
                 // Table of lengths
                 //uint[,] lengthTable = new uint[numChannels, numScanlines];
@@ -306,16 +308,15 @@ namespace Cognitics.CDB
                     for (int scanline = 0; scanline < numScanlines; ++scanline)
                     {
                         //lengthTable[channel, scanline] = SGIReader.ReadUInt32Big();
-                        SGIReader.ReadUInt32Big();
+                        SGIReader.UInt32BE();
                     }
                 }
                 
                 // RLE data
                 if (BytesPerPixelComponent == 1)
                 {
-                    int size = (int)SGIReader.BaseStream.Length - (int)SGIReader.BaseStream.Position;
-                    byte[] byteArray = SGIReader.ReadBytes(size);
-                    int inputIndex = 0;
+                    byte[] byteArray = SGIReader.Bytes;
+                    int inputIndex = SGIReader.Position;
                     int outputIndex = 0;
 
                     while (outputIndex < imageDataRGB8.Length)
@@ -375,7 +376,37 @@ namespace Cognitics.CDB
                     return null;
                 }
             }
+
+            if (downSample)
+            {
+                var downSampleBuffer = Downsample(imageDataRGB8, ref width, ref height, numChannels);
+                return downSampleBuffer;
+            }
+
             return imageDataRGB8;
+        }
+
+        byte[] Downsample(byte[] imageDataRGB8, ref int width, ref int height, int numChannels)
+        {
+            // divide each texture dimension by 2
+            var buffer = new byte[width / 2 * height / 2 * numChannels];
+            int destIndex = 0;
+            int srcIndex = 0;
+            while (destIndex + numChannels - 1 < buffer.Length)
+            {
+                for (int i = 0; i < numChannels; ++i)
+                    buffer[destIndex + i] = imageDataRGB8[srcIndex + i];
+                destIndex += numChannels;
+                srcIndex += numChannels * 2;
+                if (destIndex % (numChannels * width / 2) == 0)
+                {
+                    // skip row
+                    srcIndex += width * numChannels;
+                }
+            }
+            width /= 2;
+            height /= 2;
+            return buffer;
         }
     }
 }

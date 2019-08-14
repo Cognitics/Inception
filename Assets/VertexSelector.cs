@@ -32,8 +32,8 @@ public class VertexSelector : MonoBehaviour
     LineButton lineScript;
     Database cdbDatabase;
 
-    [HideInInspector] public List<Vector3> linePoints;
-    [HideInInspector] public List<Vector3> polyPoints;
+    [HideInInspector] public List<Vector3> linePoints = new List<Vector3>();
+    [HideInInspector] public List<Vector3> polyPoints = new List<Vector3>();
     [HideInInspector] public List<GameObject> dots;
 
     [HideInInspector] public List<Feature> pinFeatures;
@@ -57,8 +57,8 @@ public class VertexSelector : MonoBehaviour
         lineScript = lineButton.GetComponent<LineButton>();
         polyScript = polyButton.GetComponent<PolygonButton>();
 
-        linePoints = new List<Vector3>();
-        polyPoints = new List<Vector3>();
+        //linePoints = new List<Vector3>();
+        //polyPoints = new List<Vector3>();
         dots = new List<GameObject>();
 
         pinFeatures = new List<Feature>();

@@ -1,11 +1,10 @@
-﻿
-using System;
-using System.IO;
+﻿using System;
 using System.Collections.Generic;
-using System.Collections.Concurrent;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Xml;
 using UnityEngine;
 using Cognitics.CoordinateSystems;
-using Cognitics.OpenFlight;
 
 namespace Cognitics.UnityCDB
 {
@@ -21,6 +20,7 @@ namespace Cognitics.UnityCDB
         [HideInInspector] public GeographicBounds GeographicBounds = GeographicBounds.EmptyValue;
         [HideInInspector] public ScaledFlatEarthProjection Projection;
 
+        internal Dictionary<string, LODSwitch> LODSwitchByString = new Dictionary<string, LODSwitch>();
         internal Dictionary<object, LODSwitch> LODSwitchByObject = new Dictionary<object, LODSwitch>();
         internal Dictionary<object, QuadTree> QuadTreeByObject = new Dictionary<object, QuadTree>();
         [HideInInspector] public GTFeatureData ManMadeData = null;
@@ -31,8 +31,6 @@ namespace Cognitics.UnityCDB
 
         internal Vector3 lastCameraPosition = new Vector3(0.0f, 0.0f, 0.0f);
 
-        public Dictionary<CDB.LOD, ValueTuple<float, float>> LODBrackets = new Dictionary<CDB.LOD, ValueTuple<float, float>>();
-
         [HideInInspector] public CDB.Database DB = null;
 
         [HideInInspector] public GeoPackage.Database GPKG = null;
@@ -40,12 +38,26 @@ namespace Cognitics.UnityCDB
         [HideInInspector] public GeoPackage.RasterLayer GPKG_Imagery = null;
         TerrainTile GPKG_Terrain = null;
 
+        public Dictionary<GeographicBounds, Tile> ActiveTiles = new Dictionary<GeographicBounds, Tile>();
         List<Tile> tiles = new List<Tile>();
         public TileDataCache TileDataCache = new TileDataCache();
+
+        private const bool useCameraPositionTask = true; // TEMP
+        private Task cameraPositionTask = null;
+        [HideInInspector] public CancellationTokenSource TaskCameraPositionToken = new CancellationTokenSource();
 
         [HideInInspector] public ModelManager ModelManager = new ModelManager();
         [HideInInspector] public MaterialManager MaterialManager = new MaterialManager();
         [HideInInspector] public MeshManager MeshManager = new MeshManager();
+
+        public float SystemMemoryUtilization = 0.0f;
+        public float SharedMemoryUtilization = 0.0f;
+        public float SystemMemoryUtilizationLimit = 0.8f;
+        public float SharedMemoryUtilizationLimit = 0.8f;
+        public bool SystemMemoryLimitExceeded => SystemMemoryUtilization > SystemMemoryUtilizationLimit;
+        public bool SharedMemoryLimitExceeded => SharedMemoryUtilization > SharedMemoryUtilizationLimit;
+
+        public static bool isDebugBuild = false;
 
         private void OnLowMemory()
         {
@@ -53,6 +65,9 @@ namespace Cognitics.UnityCDB
             Resources.UnloadUnusedAssets();
         }
 
+#if false
+        // This is the old, faster version that gets elevation at SW corner of a triangle pair. 
+        // TODO: if we want to keep this around for quick but inaccurate lookups, we could rename it appropriately
         public float TerrainElevationAtLocation(GeographicCoordinates location)
         {
             var tiles = ActiveTiles();
@@ -81,7 +96,76 @@ namespace Cognitics.UnityCDB
             }
             return float.MaxValue;
         }
+#else
+        public float TerrainElevationAtLocation(GeographicCoordinates location)
+        {
+            foreach (var elem in ActiveTiles)
+            {
+                Tile tile = elem.Value;
+                if (location.Latitude < tile.GeographicBounds.MinimumCoordinates.Latitude)
+                    continue;
+                if (location.Longitude < tile.GeographicBounds.MinimumCoordinates.Longitude)
+                    continue;
+                if (location.Latitude > tile.GeographicBounds.MaximumCoordinates.Latitude)
+                    continue;
+                if (location.Longitude > tile.GeographicBounds.MaximumCoordinates.Longitude)
+                    continue;
 
+                var point = location.TransformedWith(Projection);
+                var cartesianBounds = tile.GeographicBounds.TransformedWith(Projection);
+
+                double spcX = (cartesianBounds.MaximumCoordinates.X - cartesianBounds.MinimumCoordinates.X) / tile.MeshDimension;
+                double spcZ = (cartesianBounds.MaximumCoordinates.Y - cartesianBounds.MinimumCoordinates.Y) / tile.MeshDimension;
+                double orgX = cartesianBounds.MinimumCoordinates.X;
+                double orgZ = cartesianBounds.MinimumCoordinates.Y;
+
+                float xComponent = (float)point.X - (float)orgX;
+                float zComponent = (float)point.Y - (float)orgZ;
+
+                int xIndex = Math.Min(tile.MeshDimension - 2, (int)Math.Floor(xComponent / spcX));
+                int zIndex = Math.Min(tile.MeshDimension - 2, (int)Math.Floor(zComponent / spcZ));
+
+                int[] indices = new int[4];
+                Vector3[] vertices = new Vector3[4];
+                indices[0] = zIndex * tile.MeshDimension + xIndex;
+                indices[1] = indices[0] + 1;
+                indices[2] = indices[0] + tile.MeshDimension;
+                indices[3] = indices[0] + tile.MeshDimension + 1;
+                for (int i = 0; i < indices.Length; ++i)
+                    vertices[i] = tile.vertices[indices[i]];
+                ref Vector3 a = ref vertices[0];
+                ref Vector3 b = ref vertices[1];
+                ref Vector3 c = ref vertices[2];
+                ref Vector3 d = ref vertices[3];
+
+                Vector3 position = new Vector3((float)point.X, 0f, (float)point.Y);
+                Vector2 position2d = new Vector2((float)point.X, (float)point.Y);
+
+                //Vector3 p0 = position;
+                //Vector3 p1 = position;
+                //bool success0 = SurfaceCollider.InterpolatePointInPlane(ref p0, a, c, d);
+                //bool success1 = SurfaceCollider.InterpolatePointInPlane(ref p1, a, d, b);
+
+                float u0, v0, w0;
+                SurfaceCollider.GetBarycentricCoords(position, a, c, d, out u0, out v0, out w0);
+                float u1, v1, w1;
+                SurfaceCollider.GetBarycentricCoords(position, a, d, b, out u1, out v1, out w1);
+
+                var plane0 = SurfaceCollider.GetPlane(a, c, d);
+                var plane1 = SurfaceCollider.GetPlane(a, d, b);
+
+                float y0 = SurfaceCollider.GetHeight(plane0, position2d);
+                float y1 = SurfaceCollider.GetHeight(plane1, position2d);
+                if (v0 >= 0f && w0 >= 0f && u0 <= 1f)
+                    return y0;
+                else if (v1 >= 0f && w1 >= 0f && u1 <= 1f)
+                    return y1;
+                else
+                    return (y0 + y1) / 2;
+            }
+            return float.MaxValue;
+        }
+#endif
         /*
         public float DistanceForBoundsGeoPackage(GeographicBounds bounds)
         {
@@ -133,9 +217,7 @@ namespace Cognitics.UnityCDB
                 */
 
             Vector3 position = lastCameraPosition;
-            List<Tile> activeTiles = new List<Tile>();
             List<Tile> tilesToCheck = new List<Tile>();
-            activeTiles = ActiveTiles();
 
             CartesianBounds cartesianBounds = bounds.TransformedWith(Projection);
 
@@ -145,8 +227,9 @@ namespace Cognitics.UnityCDB
             Vector2 boundsMin = new Vector2(LeftLowerBound.x, LeftLowerBound.z);
             Vector2 boundsMax = new Vector2(RightUpperBound.x, RightUpperBound.z);
 
-            foreach (Tile t in activeTiles)
+            foreach (var elem in ActiveTiles)
             {
+                Tile t = elem.Value;
                 CartesianBounds tileBounds = t.GeographicBounds.TransformedWith(Projection);
 
                 Vector2 tileBoundsMin = new Vector2((float)tileBounds.MinimumCoordinates.X, (float)tileBounds.MinimumCoordinates.Y);
@@ -193,60 +276,7 @@ namespace Cognitics.UnityCDB
             featureData.Component = component;
             featureData.lod = lod;
 
-            var lodSwitch = new LODSwitch(this);
-
-            /*
-            float entryDistance = 50;
-            for (int i = 6; i > 0; --i)
-            {
-                lodSwitch.EntryDistanceByLOD[i] = entryDistance;
-                lodSwitch.ExitDistanceByLOD[i] = entryDistance * (float)2.5;
-                entryDistance *= 2;
-            }
-            */
-
-
-            lodSwitch.EntryDistanceByLOD[0] = 600; lodSwitch.ExitDistanceByLOD[0] = 660;
-            lodSwitch.EntryDistanceByLOD[1] = 500; lodSwitch.ExitDistanceByLOD[1] = 550;
-            lodSwitch.EntryDistanceByLOD[2] = 400; lodSwitch.ExitDistanceByLOD[2] = 440;
-            lodSwitch.EntryDistanceByLOD[3] = 300; lodSwitch.ExitDistanceByLOD[3] = 330;
-            //lodSwitch.EntryDistanceByLOD[4] = 200; lodSwitch.ExitDistanceByLOD[4] = 220;
-            //lodSwitch.EntryDistanceByLOD[5] = 100; lodSwitch.ExitDistanceByLOD[5] = 110;
-            //lodSwitch.EntryDistanceByLOD[6] = 50; lodSwitch.ExitDistanceByLOD[6] = 60;
-
-            /*
-#if UNITY_ANDROID
-            lodSwitch.EntryDistanceByLOD[0] = 100; lodSwitch.ExitDistanceByLOD[0] = 120;
-            lodSwitch.EntryDistanceByLOD[1] = 50; lodSwitch.ExitDistanceByLOD[1] = 60;
-#else
-            lodSwitch.EntryDistanceByLOD[0] = 200; lodSwitch.ExitDistanceByLOD[0] = 220;
-            lodSwitch.EntryDistanceByLOD[1] = 100; lodSwitch.ExitDistanceByLOD[1] = 110;
-            lodSwitch.EntryDistanceByLOD[2] = 50; lodSwitch.ExitDistanceByLOD[2] = 60;
-#endif
-*/
-
-            //lodSwitch.EntryDistanceByLOD[0] = 50; lodSwitch.ExitDistanceByLOD[0] = 60;
-            //lodSwitch.EntryDistanceByLOD[1] = 25; lodSwitch.ExitDistanceByLOD[1] = 40;
-
-
-            //lodSwitch.EntryDistanceByLOD[0] = 200; lodSwitch.ExitDistanceByLOD[0] = 2420;
-            //lodSwitch.EntryDistanceByLOD[1] = 100; lodSwitch.ExitDistanceByLOD[1] = 120;
-
-            //lodSwitch.EntryDistanceByLOD[2] = 50;
-            //lodSwitch.ExitDistanceByLOD[2] = 100;
-
-            /*
-            lodSwitch.EntryDistanceByLOD[3] = 50;
-            lodSwitch.ExitDistanceByLOD[3] = 100;
-
-            lodSwitch.EntryDistanceByLOD[4] = 10;
-            lodSwitch.ExitDistanceByLOD[4] = 50;
-
-            lodSwitch.EntryDistanceByLOD[5] = 0;
-            lodSwitch.ExitDistanceByLOD[5] = 10;
-            */
-
-            LODSwitchByObject[featureData] = lodSwitch;
+            LODSwitchByObject[featureData] = LODSwitchByString["GTFeatures"];
 
             var childGameObject = new GameObject();
             childGameObject.transform.SetParent(gameObject.transform);
@@ -254,7 +284,7 @@ namespace Cognitics.UnityCDB
 
             var childQuadTree = childGameObject.AddComponent<QuadTree>();
             childQuadTree.Initialize(this, GeographicBounds);
-            childQuadTree.SwitchDelegate = lodSwitch.QuadTreeSwitchUpdate;
+            childQuadTree.SwitchDelegate = LODSwitchByObject[featureData].QuadTreeSwitchUpdate;
             childQuadTree.LoadDelegate = featureData.QuadTreeDataLoad;
             childQuadTree.LoadedDelegate = featureData.QuadTreeDataLoaded;
             childQuadTree.UnloadDelegate = featureData.QuadTreeDataUnload;
@@ -286,60 +316,7 @@ namespace Cognitics.UnityCDB
             featureData.Component = component;
             featureData.lod = lod;
 
-            var lodSwitch = new LODSwitch(this);
-
-            /*
-            float entryDistance = 50;
-            for (int i = 6; i > 0; --i)
-            {
-                lodSwitch.EntryDistanceByLOD[i] = entryDistance;
-                lodSwitch.ExitDistanceByLOD[i] = entryDistance * (float)2.5;
-                entryDistance *= 2;
-            }
-            */
-
-
-            lodSwitch.EntryDistanceByLOD[0] = 600; lodSwitch.ExitDistanceByLOD[0] = 660;
-            lodSwitch.EntryDistanceByLOD[1] = 500; lodSwitch.ExitDistanceByLOD[1] = 550;
-            lodSwitch.EntryDistanceByLOD[2] = 400; lodSwitch.ExitDistanceByLOD[2] = 440;
-            lodSwitch.EntryDistanceByLOD[3] = 300; lodSwitch.ExitDistanceByLOD[3] = 330;
-            lodSwitch.EntryDistanceByLOD[4] = 200; lodSwitch.ExitDistanceByLOD[4] = 220;
-            lodSwitch.EntryDistanceByLOD[5] = 100; lodSwitch.ExitDistanceByLOD[5] = 110;
-            //lodSwitch.EntryDistanceByLOD[6] = 50; lodSwitch.ExitDistanceByLOD[6] = 60;
-
-            /*
-#if UNITY_ANDROID
-            lodSwitch.EntryDistanceByLOD[0] = 100; lodSwitch.ExitDistanceByLOD[0] = 120;
-            lodSwitch.EntryDistanceByLOD[1] = 50; lodSwitch.ExitDistanceByLOD[1] = 60;
-#else
-            lodSwitch.EntryDistanceByLOD[0] = 200; lodSwitch.ExitDistanceByLOD[0] = 220;
-            lodSwitch.EntryDistanceByLOD[1] = 100; lodSwitch.ExitDistanceByLOD[1] = 110;
-            lodSwitch.EntryDistanceByLOD[2] = 50; lodSwitch.ExitDistanceByLOD[2] = 60;
-#endif
-*/
-
-            //lodSwitch.EntryDistanceByLOD[0] = 50; lodSwitch.ExitDistanceByLOD[0] = 60;
-            //lodSwitch.EntryDistanceByLOD[1] = 25; lodSwitch.ExitDistanceByLOD[1] = 40;
-
-
-            //lodSwitch.EntryDistanceByLOD[0] = 200; lodSwitch.ExitDistanceByLOD[0] = 2420;
-            //lodSwitch.EntryDistanceByLOD[1] = 100; lodSwitch.ExitDistanceByLOD[1] = 120;
-
-            //lodSwitch.EntryDistanceByLOD[2] = 50;
-            //lodSwitch.ExitDistanceByLOD[2] = 100;
-
-            /*
-            lodSwitch.EntryDistanceByLOD[3] = 50;
-            lodSwitch.ExitDistanceByLOD[3] = 100;
-
-            lodSwitch.EntryDistanceByLOD[4] = 10;
-            lodSwitch.ExitDistanceByLOD[4] = 50;
-
-            lodSwitch.EntryDistanceByLOD[5] = 0;
-            lodSwitch.ExitDistanceByLOD[5] = 10;
-            */
-
-            LODSwitchByObject[featureData] = lodSwitch;
+            LODSwitchByObject[featureData] = LODSwitchByString["GSFeatures"];
 
             var childGameObject = new GameObject();
             childGameObject.transform.SetParent(gameObject.transform);
@@ -347,7 +324,7 @@ namespace Cognitics.UnityCDB
 
             var childQuadTree = childGameObject.AddComponent<QuadTree>();
             childQuadTree.Initialize(this, GeographicBounds);
-            childQuadTree.SwitchDelegate = lodSwitch.QuadTreeSwitchUpdate;
+            childQuadTree.SwitchDelegate = LODSwitchByObject[featureData].QuadTreeSwitchUpdate;
             childQuadTree.LoadDelegate = featureData.QuadTreeDataLoad;
             childQuadTree.LoadedDelegate = featureData.QuadTreeDataLoaded;
             childQuadTree.UnloadDelegate = featureData.QuadTreeDataUnload;
@@ -365,15 +342,52 @@ namespace Cognitics.UnityCDB
             Destroy(QuadTreeByObject[featureData].gameObject);
             QuadTreeByObject.Remove(featureData);
             LODSwitchByObject.Remove(featureData);
-            foreach (var node in featureData.DataByNode.Keys)
-                featureData.QuadTreeDataUnload(node);
+            featureData.Unload();
             featureData = null;
+        }
+
+        public void OnDestroy()
+        {
+            if(ManMadeDataSpecific != null)
+                DestroyGSFeatureLayer(ref ManMadeDataSpecific);
+
+            if(ManMadeData != null)
+                DestroyGTFeatureLayer(ref ManMadeData);
+
+            if(TreeData != null)
+                DestroyGTFeatureLayer(ref TreeData);
+
+            /*
+            foreach (MeshEntry entry in MeshManager.MeshByName.Values)
+            {
+                entry.TaskLoadToken.Cancel();
+                entry.TaskLoadToken.Dispose();
+            }
+            foreach (MaterialEntry entry in MaterialManager.MaterialByName.Values)
+            {
+                entry.TaskLoadToken.Cancel();
+                entry.TaskLoadToken.Dispose();
+            }
+            */
+
+            foreach (var tile in tiles)
+            {
+                tile.TaskInitializeToken.Cancel();
+                tile.TaskInitializeToken.Dispose();
+                tile.TaskDistanceToken.Cancel();
+                tile.TaskDistanceToken.Dispose();
+                tile.TaskLoadToken.Cancel();
+                tile.TaskLoadToken.Dispose();
+            }
+
+            TaskCameraPositionToken.Cancel();
+            TaskCameraPositionToken.Dispose();
         }
 
         ~Database()
         {
             foreach (var tile in tiles)
-                tile.DestroyTile(tile);
+                Tile.DestroyTile(tile);
         }
 
         public bool Exists => DB.Exists;
@@ -429,6 +443,9 @@ namespace Cognitics.UnityCDB
 
         public void Initialize()
         {
+            // NOTE: Debug.isDebugBuild can only be queried from main thread, so we cache it here for use in any thread
+            isDebugBuild = Debug.isDebugBuild;
+
             Application.lowMemory += OnLowMemory;
             if (DB != null)
                 return;
@@ -445,144 +462,179 @@ namespace Cognitics.UnityCDB
                 OriginLongitude = GeographicBounds.Center.Longitude;
             }
             Projection = new ScaledFlatEarthProjection(new GeographicCoordinates(OriginLatitude, OriginLongitude), 0.1f);
-            DefineLODBrackets();
+
+            InitLODRanges();
+            SetLODBracketsForOverview();
+            //SetLODBracketsForDetail();
+
+            var cartesianBounds = GeographicBounds.TransformedWith(Projection);
+            Unity.TouchInput.CreateWalls(cartesianBounds);
+            ModelManager.Init(cartesianBounds);
+
+            //string filepath = WriteToExternalStorage.GetAndroidExternalFilesDir();
+
         }
 
-        private void LogLODBrackets()
+        void InitLODRanges()
         {
-            string logstr = "LOD BRACKETS:";
-            foreach (var bracket in LODBrackets)
-                logstr += string.Format(" {0}:({1:0.0},{2:0.0})", bracket.Key, bracket.Value.Item1, bracket.Value.Item2);
-            Debug.Log(logstr);
-        }
+            {
+                var lods = new LODSwitch(this);
+                lods.EntryDistanceByLOD[-10] = float.MaxValue; lods.ExitDistanceByLOD[-10] = float.MaxValue;
+                lods.EntryDistanceByLOD[-9] = 100000; lods.ExitDistanceByLOD[-9] = 110000;
+                lods.EntryDistanceByLOD[-8] = 50000; lods.ExitDistanceByLOD[-8] = 55000;
+                lods.EntryDistanceByLOD[-7] = 25000; lods.ExitDistanceByLOD[-7] = 27500;
+                lods.EntryDistanceByLOD[-6] = 10000; lods.ExitDistanceByLOD[-6] = 11000;
+                lods.EntryDistanceByLOD[-5] = 5000; lods.ExitDistanceByLOD[-5] = 5500;
+                lods.EntryDistanceByLOD[-4] = 2500; lods.ExitDistanceByLOD[-4] = 2750;
+                lods.EntryDistanceByLOD[-3] = 1000; lods.ExitDistanceByLOD[-3] = 2200;
+                lods.EntryDistanceByLOD[-2] = 500; lods.ExitDistanceByLOD[-2] = 550;
+                lods.EntryDistanceByLOD[-1] = 250; lods.ExitDistanceByLOD[-1] = 275;
+                LODSwitchByString["Overview"] = lods;
+            }
 
-        public void SetLODBracketsForGround()
-        {
-            LODBrackets.Clear();
-            LODBrackets.Add(-10, new ValueTuple<float, float>(float.MaxValue, float.MaxValue));
-            LODBrackets.Add(-9, new ValueTuple<float, float>(1000000, 1100000));
-            LODBrackets.Add(-8, new ValueTuple<float, float>(500000, 550000));
-            LODBrackets.Add(-7, new ValueTuple<float, float>(250000, 275000));
-            LODBrackets.Add(-6, new ValueTuple<float, float>(100000, 110000));
-            LODBrackets.Add(-5, new ValueTuple<float, float>(50000, 55000));
-            LODBrackets.Add(-4, new ValueTuple<float, float>(25000, 27500));
-            LODBrackets.Add(-3, new ValueTuple<float, float>(10000, 22000));
-            LODBrackets.Add(-2, new ValueTuple<float, float>(500, 550));
-            LODBrackets.Add(-1, new ValueTuple<float, float>(300, 330));
-            LODBrackets.Add(0, new ValueTuple<float, float>(300, 310));
-            LODBrackets.Add(1, new ValueTuple<float, float>(200, 210));
-            LODBrackets.Add(2, new ValueTuple<float, float>(100, 110));
-            LODBrackets.Add(3, new ValueTuple<float, float>(80, 90));
-            LODBrackets.Add(4, new ValueTuple<float, float>(60, 70));
-            LODBrackets.Add(5, new ValueTuple<float, float>(40, 50));
-            LODBrackets.Add(6, new ValueTuple<float, float>(30, 40));
-            LODBrackets.Add(7, new ValueTuple<float, float>(20, 30));
-            LODBrackets.Add(8, new ValueTuple<float, float>(15, 20));
-            LogLODBrackets();
-            for (int i = 9; i <= 23; ++i)
-                LODBrackets.Add(i, new ValueTuple<float, float>(0, 0));
+            {
+                var lods = new LODSwitch(this);
+                lods.EntryDistanceByLOD[-10] = float.MaxValue; lods.ExitDistanceByLOD[-10] = float.MaxValue;
+                lods.EntryDistanceByLOD[-9] = 1000000; lods.ExitDistanceByLOD[-9] = 1100000;
+                lods.EntryDistanceByLOD[-8] = 500000; lods.ExitDistanceByLOD[-8] = 550000;
+                lods.EntryDistanceByLOD[-7] = 250000; lods.ExitDistanceByLOD[-7] = 275000;
+                lods.EntryDistanceByLOD[-6] = 100000; lods.ExitDistanceByLOD[-6] = 110000;
+                lods.EntryDistanceByLOD[-5] = 50000; lods.ExitDistanceByLOD[-5] = 55000;
+                lods.EntryDistanceByLOD[-4] = 25000; lods.ExitDistanceByLOD[-4] = 27500;
+                lods.EntryDistanceByLOD[-3] = 10000; lods.ExitDistanceByLOD[-3] = 22000;
+                lods.EntryDistanceByLOD[-2] = 500; lods.ExitDistanceByLOD[-2] = 550;
+                lods.EntryDistanceByLOD[-1] = 300; lods.ExitDistanceByLOD[-1] = 330;
+                lods.EntryDistanceByLOD[0] = 300; lods.ExitDistanceByLOD[0] = 310;
+                lods.EntryDistanceByLOD[1] = 200; lods.ExitDistanceByLOD[1] = 210;
+                lods.EntryDistanceByLOD[2] = 100; lods.ExitDistanceByLOD[2] = 110;
+                lods.EntryDistanceByLOD[3] = 80; lods.ExitDistanceByLOD[3] = 90;
+                lods.EntryDistanceByLOD[4] = 60; lods.ExitDistanceByLOD[4] = 70;
+#if !UNITY_ANDROID
+                lods.EntryDistanceByLOD[5] = 40; lods.ExitDistanceByLOD[5] = 50;
+                lods.EntryDistanceByLOD[6] = 30; lods.ExitDistanceByLOD[6] = 40;
+                lods.EntryDistanceByLOD[7] = 20; lods.ExitDistanceByLOD[7] = 30;
+                lods.EntryDistanceByLOD[8] = 15; lods.ExitDistanceByLOD[8] = 20;
+#endif
+                LODSwitchByString["Detail"] = lods;
+            }
+
+            {
+                var lods = new LODSwitch(this);
+                lods.EntryDistanceByLOD[0] = 6000; lods.ExitDistanceByLOD[0] = 6600;
+                lods.EntryDistanceByLOD[1] = 5000; lods.ExitDistanceByLOD[1] = 5500;
+                lods.EntryDistanceByLOD[2] = 4000; lods.ExitDistanceByLOD[2] = 4400;
+                lods.EntryDistanceByLOD[3] = 3000; lods.ExitDistanceByLOD[3] = 3300;
+                lods.EntryDistanceByLOD[4] = 2000; lods.ExitDistanceByLOD[4] = 2200;
+                lods.EntryDistanceByLOD[5] = 1000; lods.ExitDistanceByLOD[5] = 1100;
+                //lods.EntryDistanceByLOD[6] = 900; lods.ExitDistanceByLOD[6] = 990;
+                LODSwitchByString["GTFeatures"] = lods;
+            }
+
+            {
+                var lods = new LODSwitch(this);
+                lods.EntryDistanceByLOD[0] = 6000; lods.ExitDistanceByLOD[0] = 6600;
+                lods.EntryDistanceByLOD[1] = 5000; lods.ExitDistanceByLOD[1] = 5500;
+                lods.EntryDistanceByLOD[2] = 4000; lods.ExitDistanceByLOD[2] = 4400;
+                lods.EntryDistanceByLOD[3] = 3000; lods.ExitDistanceByLOD[3] = 3300;
+                lods.EntryDistanceByLOD[4] = 2000; lods.ExitDistanceByLOD[4] = 2200;
+                lods.EntryDistanceByLOD[5] = 1000; lods.ExitDistanceByLOD[5] = 1100;
+                lods.EntryDistanceByLOD[6] = 900; lods.ExitDistanceByLOD[6] = 910;
+                //lods.EntryDistanceByLOD[7] = 800; lods.ExitDistanceByLOD[6] = 1810;
+                //lods.EntryDistanceByLOD[8] = 700; lods.ExitDistanceByLOD[6] = 1710;
+                //lods.EntryDistanceByLOD[9] = 600; lods.ExitDistanceByLOD[6] = 1610;
+                LODSwitchByString["GSFeatures"] = lods;
+            }
+
+            LoadLODRanges(System.IO.Path.Combine(Path, "LODRanges.xml"));
+            LoadOnlineInfo(System.IO.Path.Combine(Path, "OnlineInfo.xml"));
         }
 
         public void SetLODBracketsForDetail()
         {
-            LODBrackets.Clear();
-            LODBrackets.Add(-10, new ValueTuple<float, float>(float.MaxValue, float.MaxValue));
-            LODBrackets.Add(-9, new ValueTuple<float, float>(100000, 110000));
-            LODBrackets.Add(-8, new ValueTuple<float, float>(50000, 55000));
-            LODBrackets.Add(-7, new ValueTuple<float, float>(25000, 27500));
-            LODBrackets.Add(-6, new ValueTuple<float, float>(10000, 11000));
-            LODBrackets.Add(-5, new ValueTuple<float, float>(5000, 5500));
-            LODBrackets.Add(-4, new ValueTuple<float, float>(2500, 2750));
-            LODBrackets.Add(-3, new ValueTuple<float, float>(1000, 2200));
-            LODBrackets.Add(-2, new ValueTuple<float, float>(500, 550));
-            LODBrackets.Add(-1, new ValueTuple<float, float>(300, 330));
-
-#if UNITY_ANDROID
-            LODBrackets.Add(0, new ValueTuple<float, float>(100, 110));
-            LODBrackets.Add(1, new ValueTuple<float, float>(80, 70));
-            LODBrackets.Add(2, new ValueTuple<float, float>(60, 70));
-            LODBrackets.Add(3, new ValueTuple<float, float>(40, 50));
-            LODBrackets.Add(4, new ValueTuple<float, float>(30, 35));
-            LODBrackets.Add(5, new ValueTuple<float, float>(20, 25));
-            //LODBrackets.Add(6, new ValueTuple<float, float>(15, 20));
-            LogLODBrackets();
-            for (int i = 6; i <= 23; ++i)
-                LODBrackets.Add(i, new ValueTuple<float, float>(0, 0));
-#else
-            LODBrackets.Add(0, new ValueTuple<float, float>(300, 310));
-            LODBrackets.Add(1, new ValueTuple<float, float>(200, 210));
-            LODBrackets.Add(2, new ValueTuple<float, float>(100, 110));
-            LODBrackets.Add(3, new ValueTuple<float, float>(80, 90));
-            LODBrackets.Add(4, new ValueTuple<float, float>(60, 70));
-            LODBrackets.Add(5, new ValueTuple<float, float>(40, 50));
-            LODBrackets.Add(6, new ValueTuple<float, float>(30, 40));
-            LODBrackets.Add(7, new ValueTuple<float, float>(20, 30));
-            LODBrackets.Add(8, new ValueTuple<float, float>(15, 20));
-            LogLODBrackets();
-            for(int i = 9; i <= 23; ++i)
-                LODBrackets.Add(i, new ValueTuple<float, float>(0, 0));
-#endif
+            LODSwitchByObject[this] = LODSwitchByString["Detail"];
         }
 
         public void SetLODBracketsForOverview()
         {
-            LODBrackets.Clear();
-            LODBrackets.Add(-10, new ValueTuple<float, float>(float.MaxValue, float.MaxValue));
-            LODBrackets.Add(-9, new ValueTuple<float, float>(100000, 110000));
-            LODBrackets.Add(-8, new ValueTuple<float, float>(50000, 55000));
-            LODBrackets.Add(-7, new ValueTuple<float, float>(25000, 27500));
-            LODBrackets.Add(-6, new ValueTuple<float, float>(10000, 11000));
-            LODBrackets.Add(-5, new ValueTuple<float, float>(5000, 5500));
-            LODBrackets.Add(-4, new ValueTuple<float, float>(2500, 2750));
-            LODBrackets.Add(-3, new ValueTuple<float, float>(1000, 2200));
-            LODBrackets.Add(-2, new ValueTuple<float, float>(500, 550));
-            LODBrackets.Add(-1, new ValueTuple<float, float>(250, 275));
-            LogLODBrackets();
-            for(int i = 0; i <= 23; ++i)
-                LODBrackets.Add(i, new ValueTuple<float, float>(0, 0));
+            LODSwitchByObject[this] = LODSwitchByString["Overview"];
         }
 
-        private void SetLODBracketsForDesktop()
+        private void LoadOnlineInfo(string filename)
         {
-            LODBrackets.Clear();
-            float minDistance = 50.0f;
-            int highestLOD = 23;
-            float minExponent = MaxLOD - highestLOD + 6;
-            float exponent = minExponent;
-            float stretch = 1.0f;
-            for (int i = highestLOD; i >= -10; --i)
+            try
             {
-                float exponent_mod = 1.0f; // (i > MaxLOD - 10) ? 1.0f : 0.1f;
-                exponent += exponent_mod;
-                float inDistance = minDistance + (float)Math.Pow(2, exponent);
-                float outDistance = minDistance + (float)Math.Pow(2, exponent + 0.5f);
-                if (i < MaxLOD)
+                var xml = new XmlDocument();
+                xml.Load(filename);
+                if (xml.DocumentElement.Name != "OnlineInfo")
+                    return;
+                foreach (XmlNode child in xml.DocumentElement.ChildNodes)
                 {
-                    stretch *= 0.9f;
+                    if (child.Name == "Elevation")
+                    {
+                        foreach (XmlNode grandchild in child.ChildNodes)
+                        {
+                            if (grandchild.Name == "Server")
+                                TileDataCache.OnlineElevationServer = grandchild.InnerText;
+                            if (grandchild.Name == "Layer")
+                                TileDataCache.OnlineElevationLayer = grandchild.InnerText;
+                        }
+                    }
+                    if (child.Name == "Imagery")
+                    {
+                        foreach (XmlNode grandchild in child.ChildNodes)
+                        {
+                            if (grandchild.Name == "Server")
+                                TileDataCache.OnlineImageryServer = grandchild.InnerText;
+                            if (grandchild.Name == "Layer")
+                                TileDataCache.OnlineImageryLayer = grandchild.InnerText;
+                        }
+                    }
                 }
-                if (i > MaxLOD)
-                {
-                    inDistance = 0.0f;
-                    outDistance = 0.0f;
-                }
-                inDistance *= (float)Projection.Scale * stretch;
-                outDistance *= (float)Projection.Scale * stretch;
-                LODBrackets.Add(i, new ValueTuple<float, float>(inDistance, outDistance));
             }
-            LogLODBrackets();
+            catch
+            {
+            }
         }
-        
-        private void DefineLODBrackets()
+
+        private void LoadLODRanges(string filename)
         {
-            //SetLODBracketsForOverview();
-            SetLODBracketsForGround();
-            return;
-#if UNITY_ANDROID
-            SetLODBracketsForOverview();
-#else
-            SetLODBracketsForDesktop();
-#endif
+            try
+            {
+                var xml = new XmlDocument();
+                xml.Load(filename);
+                if (xml.DocumentElement.Name != "LODRanges")
+                    return;
+                foreach (XmlNode child in xml.DocumentElement.ChildNodes)
+                    LoadLODRange(child);
+            }
+            catch
+            {
+            }
         }
+
+        private void LoadLODRange(XmlNode node)
+        {
+            var lodSwitch = new LODSwitch(this);
+            foreach (XmlElement child in node.ChildNodes)
+            {
+                if (child.Name != "LOD")
+                    continue;
+                if (!child.HasAttribute("id"))
+                    continue;
+                if (!int.TryParse(child.Attributes["id"].Value, out int id))
+                    continue;
+                float indist = float.MaxValue;
+                float outdist = float.MaxValue;
+                if(child.HasAttribute("in") && (!float.TryParse(child.Attributes["in"].Value, out indist)))
+                    indist = float.MaxValue;
+                if(child.HasAttribute("out") && (!float.TryParse(child.Attributes["out"].Value, out indist)))
+                    outdist = float.MaxValue;
+                lodSwitch.EntryDistanceByLOD[id] = indist;
+                lodSwitch.ExitDistanceByLOD[id] = outdist;
+            }
+            LODSwitchByString[node.Name] = lodSwitch;
+        }
+
         
         public void SetMaxLOD(int value)
         {
@@ -610,7 +662,14 @@ namespace Cognitics.UnityCDB
         {
             TileDataCache.Run();
             ModelManager.Run();
+            ModelManager.UpdateElevations(this);
+
+            // TEST
+            if(Input.GetKeyDown(KeyCode.H))
+                HighlightModelByTag("test");
         }
+
+        public void HighlightModelByTag(string tag) => ModelManager.HighlightForTag(tag);
 
         public void GenerateTerrainForLOD(CDB.LOD lod)
         {
@@ -688,26 +747,32 @@ namespace Cognitics.UnityCDB
             return result;
         }
 
-        public List<Tile> ActiveTiles()
-        {
-            var result = new List<Tile>();
-            tiles.ForEach(tile => result.AddRange(tile.ActiveTiles()));
-            return result;
-        }
+        //public List<Tile> ActiveTiles()
+        //{
+        //    var result = new List<Tile>();
+        //    tiles.ForEach(tile => result.AddRange(tile.ActiveTiles()));
+        //    return result;
+        //}
 
         public int VertexCount()
         {
             int result = 0;
-            foreach (var tile in ActiveTiles())
+            foreach (var elem in ActiveTiles)
+            {
+                Tile tile = elem.Value;
                 result += tile.vertices.Length;
+            }
             return result;
         }
 
         public int TriangleCount()
         {
             int result = 0;
-            foreach (var tile in ActiveTiles())
+            foreach (var elem in ActiveTiles)
+            {
+                Tile tile = elem.Value;
                 result += tile.RasterDimension * tile.RasterDimension * 2;
+            }
             return result;
         }
 
@@ -730,21 +795,50 @@ namespace Cognitics.UnityCDB
         public void ApplyCameraPosition(Vector3 position)
         {
             lastCameraPosition = position;
-            if (ManMadeData != null)
-                ManMadeData.ApplyCameraPosition(position);
-            if (TreeData != null)
-                TreeData.ApplyCameraPosition(position);
-            if (ManMadeDataSpecific != null)
-                ManMadeDataSpecific.ApplyCameraPosition(position);
+            if (useCameraPositionTask)
+            {
+                if (cameraPositionTask == null)
+                    cameraPositionTask = Task.Run(() => { ApplyCameraPositionFunc(); }, TaskCameraPositionToken.Token);
+            }
+            else
+            {
+                if (ManMadeData != null)
+                    ManMadeData.ApplyCameraPosition(position);
+                if (TreeData != null)
+                    TreeData.ApplyCameraPosition(position);
+                if (ManMadeDataSpecific != null)
+                    ManMadeDataSpecific.ApplyCameraPosition(position);
+            }
+        }
+
+        // Entry method for the acp task
+        public void ApplyCameraPositionFunc()
+        {
+            while (true)
+            {
+                if (ManMadeData != null)
+                    ManMadeData.ApplyCameraPosition(lastCameraPosition);
+                if (TreeData != null)
+                    TreeData.ApplyCameraPosition(lastCameraPosition);
+                if (ManMadeDataSpecific != null)
+                    ManMadeDataSpecific.ApplyCameraPosition(lastCameraPosition);
+            }
+        }
+        
+        public void SetTileBounds()
+        {
+            Unity.TouchInput.test = 0;
         }
 
         public void UpdateTerrain(GeographicBounds changedBounds)
         {
-            EdgeCrackElimination.EliminateCracks(ActiveTiles());
+            EdgeCrackElimination.EliminateCracks(new List<Tile>(ActiveTiles.Values));
             if (ManMadeData != null)
                 ManMadeData.UpdateElevations(changedBounds);
             if (TreeData != null)
                 TreeData.UpdateElevations(changedBounds);
+            if (ManMadeDataSpecific != null)
+                ManMadeDataSpecific.UpdateElevations(changedBounds);
         }
 
         ////////////////////////////////////////////////////////////

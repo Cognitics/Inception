@@ -5,7 +5,9 @@
         "CDB",
         "GeoPackage",
         "LibTiff",
-        "libzipw"
+        "libzipw",
+        "Cognitics.Unity",
+        "Cognitics"
     ],
     "optionalUnityReferences": [],
     "includePlatforms": [],

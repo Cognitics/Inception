@@ -1,4 +1,6 @@
-﻿using System.IO;
+﻿using System;
+using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
@@ -18,11 +20,36 @@ namespace Cognitics.UnityCDB
 
         public int CompareByDistance2(NetTopologySuite.Features.Feature a, NetTopologySuite.Features.Feature b)
         {
-            var adist = (PositionByFeature[a] - CameraPosition).sqrMagnitude;
-            var bdist = (PositionByFeature[b] - CameraPosition).sqrMagnitude;
+            if (a == b)
+                return 0;
+
+            if (a == null)
+                return 1;
+            if (b == null)
+                return -1;
+
+            Vector3 avec = Vector3.zero, bvec = Vector3.zero;
+            bool afound = PositionByFeature.TryGetValue(a, out avec);
+            bool bfound = PositionByFeature.TryGetValue(b, out bvec);
+
+            if (!afound && !bfound)
+                return 0;
+
+            if (!afound)
+                return 1;
+            if (!bfound)
+                return -1;
+
+            float adist = (avec - CameraPosition).sqrMagnitude;
+            float bdist = (bvec - CameraPosition).sqrMagnitude;
             return adist.CompareTo(bdist);
         }
 
+        public int CompareByDistance2_Reverse(NetTopologySuite.Features.Feature a, NetTopologySuite.Features.Feature b)
+        {
+            int result = CompareByDistance2(a, b);
+            return -1 * result;
+        }
     }
 
     public class GSFeatureData
@@ -30,14 +57,15 @@ namespace Cognitics.UnityCDB
         [HideInInspector] public Database Database = null;
         [HideInInspector] public CDB.VectorComponent Component = null;
         [HideInInspector] public CDB.LOD lod;
-        [HideInInspector] public int MinLOD = 0;
+        [HideInInspector] public int MinLOD = 3;
 
         public ConcurrentDictionary<QuadTreeNode, GSFeatureDataNode> DataByNode = new ConcurrentDictionary<QuadTreeNode, GSFeatureDataNode>();
 
         //////////////////////////////////////////////////////////////////////////////// 
         public void QuadTreeDataLoad(QuadTreeNode node)         // QuadTreeDelegate
         {
-            Task.Run(() => TaskLoad(node));
+            var token = node.TaskLoadToken.Token;
+            Task t = Task.Run(() => { TaskLoad(node); }, token);
         }
 
         private void TaskLoad(QuadTreeNode node)
@@ -47,6 +75,7 @@ namespace Cognitics.UnityCDB
                 var featureData = new GSFeatureDataNode();
                 DataByNode[node] = featureData;
                 featureData.Features = ReadFeatures(node);
+
                 foreach (var feature in featureData.Features)
                 {
                     var geographicCoordinates = new GeographicCoordinates(feature.Geometry.Centroid.Y, feature.Geometry.Centroid.X);
@@ -56,7 +85,7 @@ namespace Cognitics.UnityCDB
                     featureData.PositionByFeature[feature] = position;
                 }
             }
-            catch (System.Exception e)
+            catch (Exception e)
             {
                 Debug.LogException(e);
             }
@@ -98,7 +127,7 @@ namespace Cognitics.UnityCDB
                     }
                 }
                 // TODO: xattr
-                foreach(var feature in tileFeatures)
+                foreach (var feature in tileFeatures)
                     featureData.CDBTileByFeature[feature] = cdbTile;
                 result.AddRange(tileFeatures);
             }
@@ -108,7 +137,81 @@ namespace Cognitics.UnityCDB
         public void QuadTreeDataLoaded(QuadTreeNode node)       // QuadTreeDelegate
         {
             var featureData = DataByNode[node];
+
+            // RemoveDuplicateModels(node);
+
             Debug.LogFormat("[GSFeatureData:{0}] Loaded: {1} features.", node.Depth, featureData.Features.Count);
+        }
+
+        private void RemoveDuplicateModels(QuadTreeNode node)
+        {
+            var GameObjectsToDestroy = new List<GameObject>();
+            var AncestorNodes = DataByNode.Keys.ToList();
+
+            AncestorNodes.RemoveAll(n => DataByNode[n].Features.Count == 0);
+            AncestorNodes.RemoveAll(n => n.Depth >= node.Depth);
+            AncestorNodes = GetNodesWithOverlappingBounds(node, AncestorNodes);
+
+            foreach (var AncestorNode in AncestorNodes)
+            {
+                foreach (var featurePosition in DataByNode[node].PositionByFeature)
+                {
+                    var GameObjects = DataByNode[AncestorNode].GameObjects;
+                    foreach (GameObject go in GameObjects)
+                    {
+                        if (featurePosition.Value.x == go.transform.position.x && featurePosition.Value.z == go.transform.position.z)
+                        {
+                            var model = go.GetComponent<Model>();
+                            DataByNode[AncestorNode].Features.Add(model.Feature);
+                            UnityEngine.Object.Destroy(model);
+                            GameObjectsToDestroy.Add(go);
+                        }
+                    }
+                }
+
+                for (int i = 0, c = GameObjectsToDestroy.Count; i < c; ++i)
+                {
+                    DataByNode[AncestorNode].GameObjects.Remove(GameObjectsToDestroy[i]);
+                    DataByNode[AncestorNode].LoadingGameObjects.Remove(GameObjectsToDestroy[i]);
+                    UnityEngine.Object.Destroy(GameObjectsToDestroy[i]);
+                }
+
+                GameObjectsToDestroy.Clear();
+            }
+        }
+
+        private List<QuadTreeNode> GetNodesWithOverlappingBounds(QuadTreeNode node, List<QuadTreeNode> candidates)
+        {
+            if (candidates.Count == 0)
+                return candidates;
+
+            List<QuadTreeNode> NodesWithOverlappingBounds = new List<QuadTreeNode>();
+
+            Vector2 nodeBoundsMax = new Vector2((float)node.GeographicBounds.MaximumCoordinates.Latitude, (float)node.GeographicBounds.MaximumCoordinates.Longitude);
+            Vector2 nodeBoundsMin = new Vector2((float)node.GeographicBounds.MinimumCoordinates.Latitude, (float)node.GeographicBounds.MinimumCoordinates.Longitude);
+
+
+            foreach (var candidate in candidates)
+            {
+                Vector2 candidateBoundsMax = new Vector2((float)candidate.GeographicBounds.MaximumCoordinates.Latitude, (float)candidate.GeographicBounds.MaximumCoordinates.Longitude);
+                Vector2 candidateBoundsMin = new Vector2((float)candidate.GeographicBounds.MinimumCoordinates.Latitude, (float)candidate.GeographicBounds.MinimumCoordinates.Longitude);
+
+                if (BoundsOverlap(candidateBoundsMin, candidateBoundsMax, nodeBoundsMin, nodeBoundsMax))
+                    NodesWithOverlappingBounds.Add(candidate);
+            }
+
+            return NodesWithOverlappingBounds;
+        }
+
+        private bool BoundsOverlap(Vector2 BottomLeft1, Vector2 TopRight1, Vector2 BottomLeft2, Vector2 TopRight2)
+        {
+            if (TopRight2.x < BottomLeft1.x || TopRight1.x < BottomLeft2.x)
+                return false;
+
+            if (TopRight2.y < BottomLeft1.y || TopRight1.y < BottomLeft2.y)
+                return false;
+
+            return true;
         }
 
         ////////////////////////////////////////////////////////////////////////////////
@@ -144,6 +247,12 @@ namespace Cognitics.UnityCDB
             if (!node.IsLoaded)
                 return;
 
+            if (Database.SystemMemoryLimitExceeded)
+                return;
+
+            //if (HasLoadedDecendents(node))
+            //    return;
+
             GSFeatureDataNode featureData = null;
             if (!DataByNode.TryGetValue(node, out featureData))
                 return;
@@ -162,28 +271,47 @@ namespace Cognitics.UnityCDB
                     }
                     featureData.LoadingGameObjects = tempList;
                 }
-
                 if (featureData.LoadingGameObjects.Count > 4)
                     return;
 
-                var feature = featureData.Features[0];
+                int index = featureData.Features.Count - 1;
+                var feature = featureData.Features[index];
                 var dist2 = (featureData.PositionByFeature[feature] - featureData.CameraPosition).sqrMagnitude;
-                if (dist2 > 100.0f * 100.0f)
+                var maxdist = 50f;
+                if (dist2 > maxdist * maxdist)
                     return;
 
-                featureData.Features.RemoveAt(0);
+                lock (featureData.Features)
+                {
+                    featureData.Features.RemoveAt(index);
+                }
 
                 try
                 {
                     var modelGameObject = GenerateModel(node, feature);
-                    featureData.GameObjects.Add(modelGameObject);
-                    featureData.LoadingGameObjects.Add(modelGameObject);
+                    if (modelGameObject != null)
+                    {
+                        featureData.GameObjects.Add(modelGameObject);
+                        featureData.LoadingGameObjects.Add(modelGameObject);
+                    }
                 }
-                catch (System.Exception e)
+                catch (Exception e)
                 {
                     Debug.LogException(e);
                 }
             }
+        }
+
+        private bool HasLoadedDecendents(QuadTreeNode node)
+        {
+            if (node.ChildrenLoaded())
+                return true;
+            else
+                foreach (var child in node.Children)
+                    if(HasLoadedDecendents(child))
+                        return true;
+
+            return false;
         }
 
         GameObject GenerateModel(QuadTreeNode node, NetTopologySuite.Features.Feature feature)
@@ -219,13 +347,14 @@ namespace Cognitics.UnityCDB
             model.ZipFilename = zipFilename;
             model.FltFilename = Path.GetFileName(fltFilename);
             model.ModelManager = Database.ModelManager;
-            model.ModelManager.Models[model] = new ModelEntry();
             model.MaterialManager = Database.MaterialManager;
             model.MeshManager = Database.MeshManager;
+            model.Feature = feature;
             gameObj.transform.SetParent(node.Root.transform, false);
             gameObj.transform.localScale = (float)Database.Projection.Scale * Vector3.one;
             gameObj.transform.position = featureData.PositionByFeature[feature];
             gameObj.transform.rotation = Quaternion.Euler(0f, heading, 0f);
+            model.ModelManager.Add(model);
             return gameObj;
         }
 
@@ -238,7 +367,10 @@ namespace Cognitics.UnityCDB
                 return;
             foreach (var gameObj in featureData.GameObjects)
                 GameObject.Destroy(gameObj);
-            featureData.Features.Clear();
+            lock (featureData.Features)
+            {
+                featureData.Features.Clear();
+            }
             featureData.CDBTileByFeature.Clear();
             featureData.GameObjects.Clear();
         }
@@ -246,20 +378,34 @@ namespace Cognitics.UnityCDB
         public void Unload()
         {
             foreach (var node in DataByNode.Keys)
+            {
+                node.TaskLoadToken.Cancel();
+                node.TaskLoadToken.Dispose();
                 QuadTreeDataUnload(node);
+            }
         }
 
         ////////////////////////////////////////////////////////////////////////////////
 
         public void ApplyCameraPosition(Vector3 position)
         {
-            if (Time.frameCount % 60 != 0)
-                return;
-            foreach (var kv in DataByNode)
+            try
             {
-                kv.Value.CameraPosition = position;
-                if (kv.Key.IsActive)
-                    kv.Value.Features.Sort(kv.Value.CompareByDistance2);
+                foreach (var kv in DataByNode)
+                {
+                    kv.Value.CameraPosition = position;
+                    if (kv.Key.IsActive)
+                    {
+                        lock (kv.Value.Features)
+                        {
+                            kv.Value.Features.Sort(kv.Value.CompareByDistance2_Reverse);
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
             }
         }
 
@@ -267,7 +413,7 @@ namespace Cognitics.UnityCDB
         {
             // iterate through all models in bounds and update elevation
             var coords = new CartesianCoordinates();
-            foreach(var node in DataByNode)
+            foreach (var node in DataByNode)
             {
                 if (node.Key.GeographicBounds.MinimumCoordinates.Latitude > bounds.MaximumCoordinates.Latitude)
                     continue;
@@ -295,6 +441,14 @@ namespace Cognitics.UnityCDB
             int result = 0;
             foreach (var node in DataByNode)
                 result += node.Value.GameObjects.Count;
+            return result;
+        }
+
+        public int FeatureCount()
+        {
+            int result = 0;
+            foreach (var node in DataByNode)
+                result += node.Value.Features.Count;
             return result;
         }
 

@@ -9,8 +9,6 @@ public class Options : MonoBehaviour
     public GameObject optionsPanel = null;
     public GameObject debugCheckmark = null;
     public GameObject uiControlsCheckmark = null;
-    Slider maxLodSlider = null;
-    Text maxLodValue = null;
     public Slider speedSlider = null;
     Text speedValue = null;
     public GameObject debugCanvas = null;
@@ -21,15 +19,14 @@ public class Options : MonoBehaviour
     public GameObject geoLayersPrefab;
     public GameObject geoLayerContent;
     public GameObject geoLayerCanvas;
+    public Layers layerScript;
 
     void Awake()
     {
-        //optionsPanel.SetActive(false);
-        //maxLodSlider = transform.Find("Panel/MaxLODSlider").GetComponent<Slider>();
-        //maxLodValue = transform.Find("Panel/MaxLODValue").GetComponent<Text>();
-        //OnMaxLodSliderChanged();
-        //OnSpeedSliderChanged();
+        uiControlsCanvas.SetActive(true);
+        uiControlsCheckmark.SetActive(true);
         geoLayerCanvas.SetActive(false);
+        layerScript = layersCanvas.GetComponent<Layers>();
     }
 
     public void OnClick()
@@ -67,22 +64,20 @@ public class Options : MonoBehaviour
         if (layersCanvas != null)
         {
             layersCanvas.SetActive(!layersCanvas.activeSelf);
-        }
-    }
 
-    public void OnMaxLodSliderChanged()
-    {
-        //maxLodValue.text = ((int)maxLodSlider.value).ToString();
-        //if (Database != null)
-            //Database.SetMaxLOD((int)maxLodSlider.value);
+            if (layersCanvas.activeSelf)
+                layerScript.PopulateList();
+            //if (!layersCanvas.activeSelf)
+                //layerScript.RemoveList();
+        }
     }
 
     public void OnSpeedSliderChanged()
     {
-        return;
-        speedValue.text = ((int)speedSlider.value).ToString();
-        if (UserObject != null)
-            UserObject.GetComponent<User>().SpeedSlider = (int)speedSlider.value;
+        
+        //speedValue.text = ((int)speedSlider.value).ToString();
+        //if (UserObject != null)
+           // UserObject.GetComponent<User>().SpeedSlider = (int)speedSlider.value;
     }
 
     public void OpenReadme()
@@ -112,7 +107,8 @@ public class Options : MonoBehaviour
         {
             text.text = s;
             go = Instantiate(geoLayersPrefab);
-            go.transform.parent = geoLayerContent.transform;
+            go.transform.SetParent(geoLayerContent.transform);
+            go.transform.localScale = new Vector3(1, 1, 1);
         }
 
     }
@@ -121,7 +117,7 @@ public class Options : MonoBehaviour
         var layers = GameObject.Find("LayersCanvas");
         if (layers != null)
             layers.SetActive(false);
-        layers = null;
+        //layerScript.RemoveList();
     }
     private void CloseGeo()
     {

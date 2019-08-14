@@ -54,8 +54,8 @@ Camera:
     y: 0
     width: 1
     height: 1
-  near clip plane: 1
-  far clip plane: 1000000
+  near clip plane: 0.1
+  far clip plane: 100000
   field of view: 26.991467
   orthographic: 0
   orthographic size: 5
@@ -153,12 +153,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ffcf714a5a4dcde439e2afb8dab46570, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  ModeButtonGameObject: {fileID: 0}
   MouseSensitivity: 100
   TouchSensitivity: 0.04
-  NormalSpeed: 10
-  ShiftSpeed: 100
+  NormalSpeed: 2
+  ShiftSpeed: 20
   ClampAngle: 80
-  MinimumElevation: 10
+  MinimumElevation: 5
   SpeedSlider: 10
 --- !u!114 &114263883795992982
 MonoBehaviour:

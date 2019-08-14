@@ -10,7 +10,7 @@ public class PointofInterest : MonoBehaviour
     public Button buttonPrefab;
     public GameObject contentPane;
     public GameObject cdbButton;
-    private Database database;
+    public Database database;
     private string filepath;
     private string title = "Title";
     private bool isFirstTimeLoaded = true;

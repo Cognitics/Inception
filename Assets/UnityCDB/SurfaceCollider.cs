@@ -7,24 +7,41 @@ namespace Cognitics.UnityCDB
 
     public class SurfaceCollider : MonoBehaviour
     {
-        public Database Database = null;
+        [HideInInspector] public Database Database = null;
         public double minCameraElevation = 0.0f;
 
         private Vector3[] verticesBelowCamera = new Vector3[4];
         private int[] indicesBelowCamera = new int[4];
+        public bool isOverTile;
 
-        void Update()
+        void Start()
         {
-            if (Database == null)
-                return;
-            GetTerrainElevation();
+            isOverTile = true;
         }
+
+        //void Update()
+        //{
+        //    if (Database == null)
+        //        return;
+        //    GetTerrainElevation();
+        //}
 
         private void GetTerrainElevation()
         {
+            if (Database == null)
+            {
+                isOverTile = false;
+                return;
+            }
+
             Tile tile = GetTileBelowCamera();
             if (tile == null || tile.IsLoaded == false)
+            {
+                isOverTile = false;
                 return;
+            }
+            else
+                isOverTile = true;
 
             CartesianBounds cartesianBounds = tile.GeographicBounds.TransformedWith(Database.Projection);
 
@@ -65,21 +82,28 @@ namespace Cognitics.UnityCDB
 
         public Tile GetTileBelowCamera()
         {
-            var activeTiles = Database.ActiveTiles();
             var camera = new CartesianCoordinates(transform.position.x, transform.position.z);
-            for (int i = 0; i < activeTiles.Count; ++i)
+            foreach (var elem in Database.ActiveTiles)
             {
-                CartesianBounds cartesianBounds = activeTiles[i].GeographicBounds.TransformedWith(Database.Projection);
+                Tile tile = elem.Value;
+                CartesianBounds cartesianBounds = tile.GeographicBounds.TransformedWith(Database.Projection);
                 if (cartesianBounds.MaximumCoordinates.X > camera.X
                     && cartesianBounds.MaximumCoordinates.Y > camera.Y
                     && cartesianBounds.MinimumCoordinates.X < camera.X
                     && cartesianBounds.MinimumCoordinates.Y < camera.Y)
                 {
-                    return activeTiles[i];
+                    return tile;
                 }
             }
             return null;
         }
+
+        public void TerrainElevationGetter()
+        {
+            GetTerrainElevation();
+        }
+
+        #region Utility
 
         /* Since Unity's Normalize doesn't normalize */
         public static void Normalize(ref Vector3 v)
@@ -146,11 +170,48 @@ namespace Cognitics.UnityCDB
             return !float.IsNaN(point.y);
         }
 
-        public void TerrainElevationGetter()
+        // Compute barycentric coordinates (u, v, w) for
+        // point p with respect to triangle (a, b, c)
+        public static void GetBarycentricCoords(Vector3 p, Vector3 a, Vector3 b, Vector3 c, out float u, out float v, out float w)
         {
-            GetTerrainElevation();
+            Vector3 v0 = b - a, v1 = c - a, v2 = p - a;
+            float d00 = Vector3.Dot(v0, v0);
+            float d01 = Vector3.Dot(v0, v1);
+            float d11 = Vector3.Dot(v1, v1);
+            float d20 = Vector3.Dot(v2, v0);
+            float d21 = Vector3.Dot(v2, v1);
+            float invDenom = 1f / (d00 * d11 - d01 * d01);
+            v = (d11 * d20 - d01 * d21) * invDenom;
+            w = (d00 * d21 - d01 * d20) * invDenom;
+            u = 1.0f - v - w;
         }
 
+        public static float GetHeight(Plane plane, Vector2 pt)
+        {
+            Vector4 vec = plane.Vec4();
+            float a = vec.x;
+            float b = vec.y;
+            float c = vec.z;
+            float d = vec.w;
+
+            float x = pt.x;
+            float z = pt.y;
+
+            //ax + by + cz + d = 0
+            //ax + cz + d = -by
+            float y = -(a * x + c * z + d) / b;
+
+            return y;
+        }
+
+        public static Plane GetPlane(Vector3 a, Vector3 b, Vector3 c)
+        {
+            //Vector3 cross = Vector3.Cross(b - a, c - a);
+            //Vector3 normal = cross.normalized;
+            return new Plane(a, b, c);
+        }
+
+        #endregion
     }
 
 }

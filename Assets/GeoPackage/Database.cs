@@ -142,7 +142,7 @@ namespace Cognitics.GeoPackage
             layer.DataType = statement.Value("data_type", "");
             layer.Identifier = statement.Value("identifier", "");
             layer.Description = statement.Value("description", "");
-            layer.LastChange = DateTime.MinValue;// statement.Value("last_change", DateTime.MinValue);
+            layer.LastChange = statement.Value("last_change", DateTime.MinValue);
             layer.MinX = statement.Value("min_x", double.MaxValue);
             layer.MinY = statement.Value("min_y", double.MaxValue);
             layer.MaxX = statement.Value("max_x", double.MinValue);

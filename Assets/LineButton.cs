@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
-
+using Cognitics.UnityCDB;
 
 public class LineButton : MonoBehaviour
 {
@@ -15,21 +15,24 @@ public class LineButton : MonoBehaviour
     public GameObject lineObject;
     public Material mat;
     private VertexSelector vs;
-    private LineRenderer lr;
     [HideInInspector] public bool buttonSelected = false;
     Color buttonColor;
     string buttonString;
     string buttonStringClicked = "Finish Linear (2+ points)";
     Text buttonText;
-    
-    void Start()
+
+    void Initialize()
     {
         lineButton = gameObject.GetComponent<Button>();
         buttonText = lineButton.GetComponentInChildren<Text>();
         buttonColor = lineButton.GetComponent<Image>().color;
         buttonString = buttonText.text;
         vs = camera.GetComponent<VertexSelector>();
-        lineObjectScript = lineObject.GetComponent<LineObject>();
+    }
+
+    void Start()
+    {
+        Initialize();
     }
 
     public void SwitchButtonState()
@@ -62,8 +65,14 @@ public class LineButton : MonoBehaviour
         vs.linePoints.Clear();
     }
 
+    // TODO: the two DrawLine methods need to be consolidated because there's too much duplicate code
+
     public void DrawLine()
     {
+        // HACK: this method is known to be called on components whose game objects have never been activated, so manually call Initialize here
+        // TODO: handle this more elegantly
+        Initialize();
+
         if (vs.linePoints.Count < 2)
         {
             vs.linePoints.Clear();
@@ -75,12 +84,12 @@ public class LineButton : MonoBehaviour
             return;
         }
         lineObject.transform.position = vs.linePoints[0];
-        lineObject.GetComponent<LineObject>().ClearFields();
-        lineObject.GetComponent<LineObject>().ClearTitle();
-        lineObject.AddComponent<LineRenderer>();
-        lr = lineObject.GetComponent<LineRenderer>();
+        var lo = lineObject.GetComponent<LineObject>();
+        lo.ClearFields();
+        lo.ClearTitle();
+        var lr = lineObject.GetOrAddComponent<LineRenderer>();
         lr.material = mat;
-        lineObjectScript.vectLocations = vs.linePoints;
+        lo.vectLocations = vs.linePoints;
         lr.positionCount = vs.linePoints.Count;
         lr.startColor = new Color(1, 0, 0);
         lr.endColor = new Color(1, 0, 0);
@@ -97,7 +106,7 @@ public class LineButton : MonoBehaviour
         foreach (GameObject g in vs.dots)
             Destroy(g);
 
-        lineObject.GetComponent<LineObject>().ClearFields();
+        lo.ClearFields();
         lineObject.SetActive(true);
         Instantiate(lineObject, vs.linePoints[0], Quaternion.identity);
         lineObject.SetActive(false);
@@ -106,19 +115,27 @@ public class LineButton : MonoBehaviour
 
     public void DrawLine(ref GameObject lineObject)
     {
+        // HACK: this method is known to be called on components whose game objects have never been activated, so manually call Initialize here
+        // TODO: handle this more elegantly
+        Initialize();
+
         if (vs.linePoints.Count < 2)
         {
             vs.linePoints.Clear();
             return;
         }
-
+        if(vs.linePoints.Contains(new Vector3(0, 0, 0)))
+        {
+            vs.linePoints.Clear();
+            return;
+        }
         lineObject.transform.position = vs.linePoints[0];
-        lineObject.AddComponent<LineRenderer>();
-        //lineObject.GetComponent<LineObject>().title.GetComponent<TMP_InputField>().text = "";
-        //lineObject.GetComponent<LineObject>().description.GetComponent<TMP_InputField>().text = "";
-        lr = lineObject.GetComponent<LineRenderer>();
+        var lr = lineObject.GetOrAddComponent<LineRenderer>();
+        var lo = lineObject.GetComponent<LineObject>();
+        //lo.title.GetComponent<TMP_InputField>().text = "";
+        //lo.description.GetComponent<TMP_InputField>().text = "";
         lr.material = mat;
-        lineObjectScript.vectLocations = vs.linePoints;
+        lo.vectLocations = vs.linePoints;
         lr.positionCount = vs.linePoints.Count;
         lr.startColor = new Color(1, 0, 0);
         lr.endColor = new Color(1, 0, 0);
@@ -134,6 +151,7 @@ public class LineButton : MonoBehaviour
 
         foreach (GameObject g in vs.dots)
             Destroy(g);
+
         lineObject.SetActive(true);
         Instantiate(lineObject, vs.linePoints[0], Quaternion.identity);
         lineObject.SetActive(false);

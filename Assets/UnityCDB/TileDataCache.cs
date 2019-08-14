@@ -1,10 +1,13 @@
 ﻿
+using System;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
+using System.IO;
+using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 using NetTopologySuite.Features;
-using System;
+using UnityEngine;
 
 namespace Cognitics.UnityCDB
 {
@@ -31,6 +34,11 @@ namespace Cognitics.UnityCDB
         public int MaximumTasks = 4;
         public int tileLifeSpan = 30;
         public int MaximumEntries = 100;
+
+        public string OnlineElevationServer;
+        public string OnlineElevationLayer;
+        public string OnlineImageryServer;
+        public string OnlineImageryLayer;
 
         public List<Request> WaitingRequests = new List<Request>();
         public List<Request> LoadedRequestsMRU = new List<Request>();
@@ -159,45 +167,145 @@ namespace Cognitics.UnityCDB
 
         private void TaskRun_PrimaryTerrainElevation(Request request)
         {
-            var component = (CDB.PrimaryTerrainElevation)request.Component;
-            float[] result = null;
-            if (component.Exists(request.Tile))
+            try
             {
-                float[] source = component.Read(request.Tile);
-                result = new float[request.Tile.MeshDimension * request.Tile.MeshDimension];
-                for (int row = 0; row < request.Tile.RasterDimension; ++row)
+                var component = (CDB.PrimaryTerrainElevation)request.Component;
+                if ((OnlineElevationServer != null) && !component.Exists(request.Tile))
                 {
-                    for (int column = 0; column < request.Tile.RasterDimension; ++column)
-                        result[(row * request.Tile.MeshDimension) + column] = source[((request.Tile.RasterDimension - row - 1) * request.Tile.RasterDimension) + column];
-                    result[(row * request.Tile.MeshDimension) + request.Tile.RasterDimension] = result[(row * request.Tile.MeshDimension) + request.Tile.RasterDimension - 1];
+                    string uri = string.Format("{0}?SERVICE=WCS&VERSION=1.0.0&CRS=EPSG:4326&REQUEST=GetCoverage&FORMAT=GeoTIFF&COVERAGE={1}{2}{3}",
+                        OnlineElevationServer,
+                        WebUtility.UrlEncode(OnlineElevationLayer),
+                        string.Format("&WIDTH={0}&HEIGHT={1}", request.Tile.RasterDimension, request.Tile.RasterDimension),
+                        string.Format("&BBOX={0},{1},{2},{3}",
+                            (double)request.Tile.Bounds.MinimumCoordinates.Longitude,
+                            (double)request.Tile.Bounds.MinimumCoordinates.Latitude,
+                            (double)request.Tile.Bounds.MaximumCoordinates.Longitude,
+                            (double)request.Tile.Bounds.MaximumCoordinates.Latitude));
+                    var web = (HttpWebRequest)WebRequest.Create(uri);
+                    var response = (HttpWebResponse)web.GetResponse();
+                    if (response.ContentType == "image/tiff")
+                    {
+                        Debug.Log(uri);
+                        string filename = component.Filename(request.Tile);
+                        string filepath = Path.GetDirectoryName(filename);
+                        if (!Directory.Exists(filepath))
+                            Directory.CreateDirectory(filepath);
+                        using (var s = response.GetResponseStream())
+                        {
+                            using (var m = new MemoryStream())
+                            {
+                                s.CopyTo(m);
+                                if (m.Length < 1024 * 1024 * sizeof(float) * 2)
+                                    File.WriteAllBytes(filename, m.ToArray());
+                            }
+                        }
+                    }
+                    else
+                    {
+                        Debug.Log("FAILED: " + uri);
+                        using (var reader = new StreamReader(response.GetResponseStream()))
+                            Debug.Log(reader.ReadToEnd());
+                    }
                 }
-                for (int column = 0; column < request.Tile.MeshDimension; ++column)
-                    result[(request.Tile.RasterDimension * request.Tile.MeshDimension) + column] = result[((request.Tile.RasterDimension - 1) * request.Tile.MeshDimension) + column];
+                float[] result = null;
+                if (component.Exists(request.Tile))
+                {
+                    float[] source = component.Read(request.Tile);
+                    result = new float[request.Tile.MeshDimension * request.Tile.MeshDimension];
+                    for (int row = 0; row < request.Tile.RasterDimension; ++row)
+                    {
+                        for (int column = 0; column < request.Tile.RasterDimension; ++column)
+                            result[(row * request.Tile.MeshDimension) + column] = source[((request.Tile.RasterDimension - row - 1) * request.Tile.RasterDimension) + column];
+                        result[(row * request.Tile.MeshDimension) + request.Tile.RasterDimension] = result[(row * request.Tile.MeshDimension) + request.Tile.RasterDimension - 1];
+                    }
+                    for (int column = 0; column < request.Tile.MeshDimension; ++column)
+                        result[(request.Tile.RasterDimension * request.Tile.MeshDimension) + column] = result[((request.Tile.RasterDimension - 1) * request.Tile.MeshDimension) + column];
+                }
+                Entries[request] = new Entry<float[]>() { data = result };
             }
-            Entries[request] = new Entry<float[]>() { data = result };
+            catch(Exception e)
+            {
+                Debug.LogException(e);
+            }
         }
 
         private void TaskRun_YearlyVstiRepresentation(Request request)
         {
-            var component = (CDB.YearlyVstiRepresentation)request.Component;
-            byte[] result = null;
-            if (component.Exists(request.Tile))
+            try
             {
-                byte[] source = component.Read(request.Tile);
-                result = new byte[source.Length];
-                for (int row = 0; row < request.Tile.RasterDimension; ++row)
+                var component = (CDB.YearlyVstiRepresentation)request.Component;
+                if ((OnlineImageryServer != null) && !component.Exists(request.Tile) && !component.AlternateExists(request.Tile))
                 {
-                    for (int column = 0; column < request.Tile.RasterDimension; ++column)
+                    string uri = string.Format("{0}?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap&SRS=EPSG:4326&Format=image/tiff&LAYERS={1}{2}{3}",
+                        OnlineImageryServer,
+                        WebUtility.UrlEncode(OnlineImageryLayer),
+                        string.Format("&WIDTH={0}&HEIGHT={1}", request.Tile.RasterDimension, request.Tile.RasterDimension),
+                        string.Format("&BBOX={0},{1},{2},{3}",
+                            (double)request.Tile.Bounds.MinimumCoordinates.Longitude,
+                            (double)request.Tile.Bounds.MinimumCoordinates.Latitude,
+                            (double)request.Tile.Bounds.MaximumCoordinates.Longitude,
+                            (double)request.Tile.Bounds.MaximumCoordinates.Latitude));
+                    var web = (HttpWebRequest)WebRequest.Create(uri);
+                    var response = (HttpWebResponse)web.GetResponse();
+                    if (response.ContentType == "image/tiff")
                     {
-                        int dataIndex = ((row * request.Tile.RasterDimension) + column) * 3;
-                        int sourceIndex = (((request.Tile.RasterDimension - row - 1) * request.Tile.RasterDimension) + column) * 3;
-                        result[dataIndex + 0] = source[sourceIndex + 0];
-                        result[dataIndex + 1] = source[sourceIndex + 1];
-                        result[dataIndex + 2] = source[sourceIndex + 2];
+                        Debug.Log(uri);
+                        string filename = component.AlternateFilename(request.Tile);
+                        string filepath = Path.GetDirectoryName(filename);
+                        if (!Directory.Exists(filepath))
+                            Directory.CreateDirectory(filepath);
+                        using (var s = response.GetResponseStream())
+                        {
+                            using (var m = new MemoryStream())
+                            {
+                                s.CopyTo(m);
+                                if (m.Length < 1024 * 1024 * 3 * 2)
+                                    File.WriteAllBytes(filename, m.ToArray());
+                            }
+                        }
+                    }
+                    else
+                    {
+                        Debug.Log("FAILED: " + uri);
+                        using (var reader = new StreamReader(response.GetResponseStream()))
+                            Debug.Log(reader.ReadToEnd());
                     }
                 }
+                byte[] result = null;
+                if (component.Exists(request.Tile))
+                {
+                    byte[] source = component.Read(request.Tile);
+                    result = new byte[source.Length];
+                    for (int row = 0; row < request.Tile.RasterDimension; ++row)
+                    {
+                        for (int column = 0; column < request.Tile.RasterDimension; ++column)
+                        {
+                            int dataIndex = ((row * request.Tile.RasterDimension) + column) * 3;
+                            int sourceIndex = (((request.Tile.RasterDimension - row - 1) * request.Tile.RasterDimension) + column) * 3;
+                            result[dataIndex + 0] = source[sourceIndex + 0];
+                            result[dataIndex + 1] = source[sourceIndex + 1];
+                            result[dataIndex + 2] = source[sourceIndex + 2];
+                        }
+                    }
+                }
+                if (component.AlternateExists(request.Tile))
+                {
+                    try
+                    {
+                        result = component.AlternateRead(request.Tile);
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogException(e);
+                    }
+                }
+                Entries[request] = new Entry<byte[]>() { data = result };
             }
-            Entries[request] = new Entry<byte[]>() { data = result };
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+            }
+                    
         }
 
         private void TaskRun_VectorComponentFeatures(Request request)

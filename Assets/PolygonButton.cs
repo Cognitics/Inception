@@ -1,9 +1,10 @@
-﻿using System.Collections;
+﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
-
+using Cognitics.UnityCDB;
 
 public class PolygonButton : MonoBehaviour
 {
@@ -11,7 +12,6 @@ public class PolygonButton : MonoBehaviour
     public GameObject arealObject;
     public Button lineButton;
     public Button polyButton;
-    private LineRenderer lr;
     public GameObject camera;
     private VertexSelector vs;
     public Material mat;
@@ -24,14 +24,18 @@ public class PolygonButton : MonoBehaviour
     string buttonStringClicked = "Finish Areal (3+ points)";
     Text buttonText;
 
-    void Start()
+    void Initialize()
     {
         polyButton = gameObject.GetComponent<Button>();
         buttonText = polyButton.GetComponentInChildren<Text>();
         buttonColor = polyButton.GetComponent<Image>().color;
         buttonString = buttonText.text;
         vs = camera.GetComponent<VertexSelector>();
-        arealObjectScript = arealObject.GetComponent<ArealObject>();
+    }
+
+    void Start()
+    {
+        Initialize();
     }
 
     public void SwitchButtonState()
@@ -63,8 +67,14 @@ public class PolygonButton : MonoBehaviour
         vs.polyPoints.Clear();
     }
 
+    // TODO: the two DrawPoly methods need to be consolidated because there's too much duplicate code
+
     private void DrawPoly()
     {
+        // HACK: this method is known to be called on components whose game objects have never been activated, so manually call Initialize here
+        // TODO: handle this more elegantly
+        Initialize();
+
         if (vs.polyPoints.Count < 3)
         {
             vs.polyPoints.Clear();
@@ -72,11 +82,11 @@ public class PolygonButton : MonoBehaviour
         }
         vs.polyPoints.Add(vs.polyPoints[0]);
         arealObject.transform.position = vs.polyPoints[0];
-        arealObject.AddComponent<LineRenderer>();
-        arealObject.GetComponent<ArealObject>().ClearFields();
-        arealObject.GetComponent<ArealObject>().ClearTitle();
-        lr = arealObject.GetComponent<LineRenderer>();
-        arealObjectScript.vectLocations = vs.polyPoints;
+        var lr = arealObject.GetOrAddComponent<LineRenderer>();
+        var ao = arealObject.GetComponent<ArealObject>();
+        ao.ClearFields();
+        ao.ClearTitle();
+        ao.vectLocations = vs.polyPoints;
         lr.material = mat;
         lr.positionCount = vs.polyPoints.Count;
         lr.startColor = new Color(0, 1, 0);
@@ -100,8 +110,10 @@ public class PolygonButton : MonoBehaviour
 
     public void DrawPoly(ref GameObject arealObject)
     {
-        if (vs == null)
-            vs = camera.GetComponent<VertexSelector>();
+        // HACK: this method is known to be called on components whose game objects have never been activated, so manually call Initialize here
+        // TODO: handle this more elegantly
+        Initialize();
+
         if (vs.polyPoints.Count < 3)
         {
             vs.polyPoints.Clear();
@@ -114,9 +126,16 @@ public class PolygonButton : MonoBehaviour
         }
         vs.polyPoints.Add(vs.polyPoints[0]);
         arealObject.transform.position = vs.polyPoints[0];
-        arealObject.AddComponent<LineRenderer>();
-        lr = arealObject.GetComponent<LineRenderer>();
-        arealObjectScript.vectLocations = vs.polyPoints;
+        var lr = arealObject.GetOrAddComponent<LineRenderer>();
+        var ao = arealObject.GetComponent<ArealObject>();
+        try
+        {
+            ao.vectLocations = vs.polyPoints;
+        }
+        catch (Exception e)
+        {
+            Debug.LogException(e);
+        }
         lr.material = mat;
         lr.positionCount = vs.polyPoints.Count;
         lr.startColor = new Color(0, 1, 0);

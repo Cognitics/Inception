@@ -105,9 +105,34 @@ namespace Cognitics.DBI
         public bool Next() => Reader.Read();
         public int Ordinal(string key) => Reader.GetOrdinal(key);
         public string Key(int ordinal) => Reader.GetName(ordinal);
-        public object Value(int ordinal) => Reader.GetValue(ordinal);
         public object Value(string key) => Value(Ordinal(key));
-        public T Value<T>(int ordinal, T defaultValue) => Reader.IsDBNull(ordinal) ? defaultValue : Reader.GetFieldValue<T>(ordinal);
+
+        public object Value(int ordinal)
+        {
+            try
+            {
+                return Reader.GetValue(ordinal);
+            }
+            catch (FormatException)
+            {
+                return null;
+            }
+        }
+
+        public T Value<T>(int ordinal, T defaultValue)
+        {
+            if (Reader.IsDBNull(ordinal))
+                return defaultValue;
+            try
+            {
+                return Reader.GetFieldValue<T>(ordinal);
+            }
+            catch (FormatException)
+            {
+                return defaultValue;
+            }
+        }
+
         public T Value<T>(string key, T defaultValue) => Value(Ordinal(key), defaultValue);
         public System.IO.Stream Stream(int ordinal) => Reader.GetStream(ordinal);
         public System.IO.Stream Stream(string key) => Reader.GetStream(Ordinal(key));

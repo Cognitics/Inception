@@ -7,8 +7,13 @@ public class Arrows : MonoBehaviour
     private bool isUpButtonPressed = false;
     private bool isDownButtonPressed = false;
 
+    void Start()
+    {
 
-	void Update ()
+    }
+
+
+    void Update ()
     {
         if (isUpButtonPressed)
             UserObject.transform.position += UserObject.GetComponent<User>().SpeedFactor() * Time.deltaTime * Vector3.up;
