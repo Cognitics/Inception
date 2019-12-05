@@ -1,5 +1,7 @@
-﻿using System.Collections.Generic;
+﻿using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
+using Cognitics.CoordinateSystems;
 
 public class Model : MonoBehaviour
 {
@@ -13,11 +15,14 @@ public class Model : MonoBehaviour
     public List<LODData> Meshes = null;
 
 
+
+
     [HideInInspector] public ModelManager ModelManager;
-    [HideInInspector] public MaterialManager MaterialManager;
+    [HideInInspector] public Cognitics.Unity.MaterialManager MaterialManager;
     [HideInInspector] public MeshManager MeshManager;
     [HideInInspector] public NetTopologySuite.Features.Feature Feature;
 
+    Dictionary<string, Cognitics.Unity.MaterialEntry> MaterialEntries = new Dictionary<string, Cognitics.Unity.MaterialEntry>();
     Dictionary<string, Material> Materials = new Dictionary<string, Material>();
     List<string> MaterialNames = null;
     public bool Loaded = false;
@@ -28,57 +33,80 @@ public class Model : MonoBehaviour
 
     public Dictionary<string, Color> ColorByTag = new Dictionary<string, Color>();
 
+    GeographicCoordinates GeographicCoordinates;
 
-    void Awake()
+    IEnumerator Load()
     {
-        ColorByTag["test"] = Color.magenta; // DEBUG
-    }
+        var position = gameObject.transform.position;
+        var cartesianCoordinates = new CartesianCoordinates(position.x, position.z);
+        GeographicCoordinates = cartesianCoordinates.TransformedWith(ModelManager.Database.Projection);
 
-    public bool RunLoad()
-    {
-        if (MeshKey == null)
+        if (ZipFilename == null)
+            MeshKey = System.IO.Path.GetFullPath(System.IO.Path.Combine(Path, FltFilename));
+        else
+            MeshKey = System.IO.Path.Combine(System.IO.Path.GetFullPath(System.IO.Path.Combine(Path, ZipFilename)), FltFilename);
+
+        while (Meshes == null)
         {
-            if (ZipFilename == null)
-                MeshKey = System.IO.Path.GetFullPath(System.IO.Path.Combine(Path, FltFilename));
-            else
-                MeshKey = System.IO.Path.Combine(System.IO.Path.GetFullPath(System.IO.Path.Combine(Path, ZipFilename)), FltFilename);
+            Meshes = MeshManager.LodForName(MeshKey);
+            yield return new WaitForSecondsRealtime(0.1f);
         }
 
-        Meshes = MeshManager.LodForName(MeshKey);
-        if (Meshes == null)
-            return false;
+        if (Meshes.Count == 0)
+        {
+            gameObject.SetActive(false);
+            yield break;
+        }
 
-        if (MaterialNames == null)
+        while (MaterialNames == null)
+        {
             MaterialNames = MeshManager.TexturesForMeshName(MeshKey);
+            yield return new WaitForSecondsRealtime(0.1f);
+        }
+
+        yield return null;
 
         foreach (var name in MaterialNames)
         {
             string matKey = System.IO.Path.GetFullPath(System.IO.Path.Combine(Path, name));
-            var material = MaterialManager.MaterialForName(matKey);
-            Materials[name] = material;
+            MaterialEntries[matKey] = MaterialManager.Entry(matKey); 
+            Materials[name] = null;
         }
 
-        Loaded = true;
-        foreach (var material in Materials)
+        yield return null;
+
+        bool done = false;
+        while(!done)
         {
-            if (material.Value == null)
-                Loaded = false;
+            done = true;
+            foreach (var name in MaterialNames)
+            {
+                if (Materials[name] == null)
+                {
+                    string matKey = System.IO.Path.GetFullPath(System.IO.Path.Combine(Path, name));
+                    if (!MaterialEntries[matKey].Loaded) 
+                    {
+                        done = false;
+                        break;
+                    }
+                    Materials[name] = MaterialEntries[matKey].Material;
+                }
+            }
+            if(!done)
+                yield return new WaitForSecondsRealtime(0.1f);
         }
 
-        if (!Loaded)
-            return false;
-
-        if (Meshes.Count == 0)
-            return false;
+        yield return null;
 
         var meshFilter = gameObject.AddComponent<MeshFilter>();
-        // Start at min LOD
-        CurrentLodIndex = Meshes.Count - 1;
+        CurrentLodIndex = Meshes.Count - 1;     // Start at min LOD     (??? - abrinton)
         meshFilter.mesh = Meshes[CurrentLodIndex].mesh;
 
-        var meshEntry = MeshManager.MeshByName[MeshKey];
+        yield return null;
 
+        var meshEntry = MeshManager.MeshByName[MeshKey];
         MeshRenderer = gameObject.AddComponent<MeshRenderer>();
+
         if (Materials.Values.Count != 0)
         {
             // Check that the materials in question actually have textures, or we'll be assigning bad materials 
@@ -92,8 +120,7 @@ public class Model : MonoBehaviour
                 if (texturePatternIndex != -1)
                     materialsToAssign.Add(Materials[meshEntry.Textures[texturePatternIndex]]);
             }
-
-            MeshRenderer.materials = materialsToAssign.ToArray();
+            MeshRenderer.sharedMaterials = materialsToAssign.ToArray();
         }
         else
         {
@@ -106,18 +133,17 @@ public class Model : MonoBehaviour
 
         PropertyBlock = new MaterialPropertyBlock();
 
-        return true;
+        ++ModelManager.ValidCount;
+        Loaded = true;
+
+        InvokeRepeating("UpdateElevation", 1.0f, 2.0f);
     }
 
-    public void SetMaxLod()
+    void UpdateElevation()
     {
-        if (MeshFilter == null)
-            return;
-        if (Meshes != null && Meshes.Count > 0)
-        {
-            CurrentLodIndex = 0;
-            MeshFilter.mesh = Meshes[CurrentLodIndex].mesh;
-        }
+        var position = gameObject.transform.position;
+        position.y = ModelManager.Database.TerrainElevationAtLocation(GeographicCoordinates);
+        gameObject.transform.position = position;
     }
 
     public void HighlightForTag(string tag)
@@ -142,9 +168,13 @@ public class Model : MonoBehaviour
             foreach (var name in MaterialNames)
             {
                 string matKey = System.IO.Path.GetFullPath(System.IO.Path.Combine(Path, name));
-                if(Materials[name] != null)
-                    MaterialManager.Dereference(matKey);
+                if(Materials.ContainsKey(name) && (Materials[name] != null))
+                    MaterialManager.Release(matKey);
             }
         }
+
     }
+
+
+
 }

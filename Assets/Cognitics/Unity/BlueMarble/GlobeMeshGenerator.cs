@@ -5,12 +5,14 @@ namespace Cognitics.Unity.BlueMarble
 {
     public class GlobeMeshGenerator : MonoBehaviour
     {
+        CoordinateSystems.WGS84Transform WGS84Transform = new CoordinateSystems.WGS84Transform();
+        
         void Start()
         {
             gameObject.AddComponent<MeshFilter>().mesh = GenerateMesh();
         }
 
-        public static Mesh GenerateMesh(float scale = 1e-5f)
+        public Mesh GenerateMesh(float scale = 1e-5f)
         {
             var mesh = new Mesh();
             mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
@@ -20,56 +22,60 @@ namespace Cognitics.Unity.BlueMarble
             return mesh;
         }
 
-        static int VertexCount = 1 + ((89 + 1 + 89) * 361) + 1;
+        //int VertexCount = 1 + ((89 + 1 + 89) * 361) + 1;
+        int VertexCount = 179 * 361;
 
-        static Vector3[] GenerateVertices(float scale)
+        Vector3[] GenerateVertices(float scale)
         {
             var vertices = new Vector3[VertexCount];
-            vertices[0] = Vector3ForGeodetic(-90.0, 0.0, scale);
-            int vertexIndex = 1;
-            for (int ilat = 0; ilat < 89 + 1 + 89; ++ilat)
-                for (int ilon = 0; ilon < 361; ++ilon, ++vertexIndex)
-                    vertices[vertexIndex] = Vector3ForGeodetic(ilat - 89, ilon - 180, scale);
-            vertices[vertexIndex] = Vector3ForGeodetic(90.0, 0.0, scale);
+            //vertices[0] = Vector3ForGeodetic(-90.0, 0.0, scale);
+            int vertexIndex = 0;
+            for (int ilat = -89; ilat <= 89; ++ilat)
+                for (int ilon = -180; ilon <= 180; ++ilon, ++vertexIndex)
+                    vertices[vertexIndex] = Vector3ForGeodetic(ilat, ilon, scale);
+            //vertices[vertexIndex] = Vector3ForGeodetic(90.0, 0.0, scale);
             return vertices;
         }
 
-        static Vector3 Vector3ForGeodetic(double latitude, double longitude, float scale)
+        Vector3 Vector3ForGeodetic(double latitude, double longitude, float scale)
         {
-            WGS84.ConvertToECEF(latitude, longitude, 0.0, out double x, out double y, out double z);
+            WGS84Transform.GeodeticToECEF(latitude, longitude, 0.0, out double x, out double y, out double z);
             x *= scale;
             y *= scale;
             z *= scale;
             return new Vector3((float)x, (float)z, (float)y);
         }
 
-        static Vector2[] GenerateUVs()
+        Vector2[] GenerateUVs()
         {
             var uvs = new Vector2[VertexCount];
-            uvs[0] = Vector2.zero;
-            int vertexIndex = 1;
-            for (int ilat = 0; ilat < 89 + 1 + 89; ++ilat)
-                for (int ilon = 0; ilon < 361; ++ilon, ++vertexIndex)
-                    uvs[vertexIndex].Set(ilon / 360.0f, ilat / 180.0f);
-            uvs[vertexIndex] = Vector2.one;
+            //uvs[0] = Vector2.zero;
+            int vertexIndex = 0;
+            for (int ilat = -89; ilat <= 89; ++ilat)
+                for (int ilon = -180; ilon <= 180; ++ilon, ++vertexIndex)
+                    uvs[vertexIndex].Set((ilon + 180) / 360.0f, (ilat + 90) / 180.0f);
+            //uvs[vertexIndex] = Vector2.one;
             return uvs;
         }
 
-        static int[] GenerateTriangles()
+        int[] GenerateTriangles()
         {
-            var triangles = new int[180 * 360 * 6];
+            var triangles = new int[178 * 360 * 6];
             int triangleIndex = 0;
+            /*
             for (int ilon = 0; ilon < 360; ++ilon, triangleIndex += 3)
             {
                 triangles[triangleIndex + 0] = 0;
                 triangles[triangleIndex + 1] = ilon + 1;
                 triangles[triangleIndex + 2] = ilon + 2;
             }
-            for (int ilat = 0; ilat < 89 + 1 + 89 - 1; ++ilat)
+            */
+            for (int ilat = -89; ilat < 89; ++ilat)
             {
-                for (int ilon = 0; ilon < 360; ++ilon, triangleIndex += 6)
+                for (int ilon = -180; ilon < 180; ++ilon, triangleIndex += 6)
                 {
-                    int vertexIndex = 1 + (ilat * 361) + ilon;
+                    int vertexIndex = ((ilat + 89) * 361) + (ilon + 180);
+
                     int lowerLeftIndex = vertexIndex;
                     int lowerRightIndex = lowerLeftIndex + 1;
                     int upperLeftIndex = lowerLeftIndex + 361;
@@ -84,12 +90,14 @@ namespace Cognitics.Unity.BlueMarble
                     triangles[triangleIndex + 5] = lowerRightIndex;
                 }
             }
+            /*
             for (int ilon = 0; ilon < 360; ++ilon, triangleIndex += 3)
             {
                 triangles[triangleIndex + 0] = (VertexCount - 1 - 361) + ilon + 1;
                 triangles[triangleIndex + 1] = (VertexCount - 1 - 361) + ilon + 0;
                 triangles[triangleIndex + 2] = VertexCount - 1;
             }
+            */
             return triangles;
         }
 

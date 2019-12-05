@@ -12,9 +12,9 @@ public class ModeButton : MonoBehaviour
 
     private int State = StateOverview;
 
-    private Button Button;
-    private Image ButtonImage;
-    private Text ButtonText;
+    public Button Button;
+    public Image ButtonImage;
+    public Text ButtonText;
     private GameObject UserObject;
     private Camera Camera;
     private GameObject TerrainTester;
@@ -26,9 +26,6 @@ public class ModeButton : MonoBehaviour
 
     void Start()
     {
-        Button = GetComponent<Button>();
-        ButtonImage = GetComponent<Image>();
-        ButtonText = GetComponentInChildren<Text>();
         Camera = Camera.main;
         UserObject = Camera.transform.parent.gameObject;
         TerrainTester = GameObject.Find("TerrainTester");
@@ -50,7 +47,7 @@ public class ModeButton : MonoBehaviour
             HandleSelect(Input.GetTouch(0).position, true);
     }
 
-    void UpdateState(int state)
+    public void UpdateState(int state)
     {
         State = state;
         ButtonImage.color = Button.colors.normalColor;

@@ -246,6 +246,8 @@ namespace Cognitics.UnityCDB
             //if (HasLoadedDecendents(node))
             //    return;
 
+            var maxdist = Database.LODSwitchByObject[this].MaxDistance * Database.Projection.Scale;
+
             GTFeatureDataNode featureData = null;
             if (!DataByNode.TryGetValue(node, out featureData))
                 return;
@@ -257,7 +259,6 @@ namespace Cognitics.UnityCDB
                 int index = featureData.Features.Count - 1;
                 var feature = featureData.Features[index];
                 var dist2 = (featureData.PositionByFeature[feature] - featureData.CameraPosition).sqrMagnitude;
-                var maxdist = 50f;
                 if (dist2 > maxdist * maxdist)
                     return;
 
@@ -333,6 +334,7 @@ namespace Cognitics.UnityCDB
             gameObj.transform.position = featureData.PositionByFeature[feature];
             gameObj.transform.rotation = Quaternion.Euler(0f, heading, 0f);
             model.ModelManager.Add(model);
+            model.StartCoroutine("Load");
             return gameObj;
         }
 

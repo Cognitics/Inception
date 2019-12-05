@@ -120,6 +120,59 @@ namespace Cognitics.CDB
             }
             return result;
         }
+
+        public byte[] GeocellInventory()
+        {
+            var result = new byte[180 * 360];
+            string path_tiles = System.IO.Path.Combine(Database.Path, "Tiles");
+            foreach (var dir_latitude in System.IO.Directory.EnumerateDirectories(path_tiles))
+            {
+                string subdir_latitude = System.IO.Path.GetFileName(dir_latitude);
+                char ns = subdir_latitude[0];
+                if (!int.TryParse(subdir_latitude.Substring(1), out int ilat))
+                    continue;
+                int y = (ns == 'N') ? 90 + ilat : 90 - ilat;
+                string path_latitude = System.IO.Path.Combine(path_tiles, subdir_latitude);
+                foreach (var dir_longitude in System.IO.Directory.EnumerateDirectories(path_latitude))
+                {
+                    string subdir_longitude = System.IO.Path.GetFileName(dir_longitude);
+                    char we = subdir_longitude[0];
+                    if (!int.TryParse(subdir_longitude.Substring(1), out int ilon))
+                        continue;
+                    int x = (we == 'E') ? 180 + ilon : 180 - ilon;
+                    result[(y * 360) + x] = 1;
+                }
+            }
+            return result;
+        }
+
+        public byte[] DatasetInventory(Tile area_tile, Component component, LOD max_lod)
+        {
+            int dim = (int)Math.Floor(Math.Pow(2, max_lod - area_tile.LOD));
+            double row_spacing = 1.0 / dim;
+            double col_spacing = (double)area_tile.Bounds.MinimumCoordinates.Latitude.TileWidth / dim;
+            var result = new byte[dim * dim];
+            for (int lod = area_tile.LOD; lod <= max_lod; ++lod)
+            {
+                var tiles = Generate(area_tile.Bounds, lod);
+                foreach (var tile in tiles)
+                {
+                    if (!component.Exists(tile))
+                        continue;
+                    int row_start = (int)Math.Floor((tile.Bounds.MinimumCoordinates.Latitude - area_tile.Bounds.MinimumCoordinates.Latitude) / row_spacing);
+                    int col_start = (int)Math.Floor((tile.Bounds.MinimumCoordinates.Longitude - area_tile.Bounds.MinimumCoordinates.Longitude) / col_spacing);
+                    int local_dim = (int)Math.Floor(Math.Pow(2, max_lod - tile.LOD));
+                    for (int row = row_start; row < row_start + local_dim; ++row)
+                    {
+                        for (int col = col_start; col < col_start + local_dim; ++col)
+                            result[(row * dim) + col] = (byte)(lod - area_tile.LOD);
+                    }
+                }
+            }
+            return result;
+        }
+
+
     }
 
 }

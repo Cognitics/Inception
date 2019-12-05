@@ -12,7 +12,7 @@ public class OpenFlightTester : MonoBehaviour
 
     private Database Database = null;
     private ModelManager modelManager = null;
-    private MaterialManager materialManager = null;
+    private Cognitics.Unity.MaterialManager materialManager = null;
     private MeshManager meshManager = null;
     private List<GameObject> gameObjects = new List<GameObject>();
     private Dictionary<string, Cognitics.OpenFlight.Texture> fltTextures = new Dictionary<string, Cognitics.OpenFlight.Texture>();

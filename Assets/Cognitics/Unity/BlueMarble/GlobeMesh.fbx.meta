@@ -5,10 +5,10 @@ ModelImporter:
   fileIDToRecycleName:
     100000: //RootNode
     400000: //RootNode
-    2100000: BlueMarbleTopoBathy16
+    2100000: BlueMarbleTopoBathy15
     2300000: //RootNode
     3300000: //RootNode
-    4300000: MeshGenerator
+    4300000: GlobeMesh
     2186277476908879412: ImportLogs
   externalObjects: {}
   materials:

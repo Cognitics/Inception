@@ -23,7 +23,7 @@ public class Options : MonoBehaviour
 
     void Awake()
     {
-        uiControlsCanvas.SetActive(true);
+        uiControlsCanvas.SetActive(false);
         uiControlsCheckmark.SetActive(true);
         geoLayerCanvas.SetActive(false);
         layerScript = layersCanvas.GetComponent<Layers>();

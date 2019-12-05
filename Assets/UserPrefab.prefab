@@ -101,7 +101,6 @@ GameObject:
   - component: {fileID: 4359493694296010}
   - component: {fileID: 54676832651950532}
   - component: {fileID: 8003795053778956095}
-  - component: {fileID: 114263883795992982}
   - component: {fileID: 462581905131969127}
   m_Layer: 0
   m_Name: UserPrefab
@@ -154,25 +153,16 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   ModeButtonGameObject: {fileID: 0}
+  newMovement: 0
   MouseSensitivity: 100
   TouchSensitivity: 0.04
+  toggleObject: {fileID: 0}
   NormalSpeed: 2
   ShiftSpeed: 20
+  RotationSpeed: 20
   ClampAngle: 80
   MinimumElevation: 5
   SpeedSlider: 10
---- !u!114 &114263883795992982
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1337038385500770}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 356911809162f9e46a2dae79d730e42f, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
 --- !u!114 &462581905131969127
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -187,3 +177,4 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   Database: {fileID: 0}
   minCameraElevation: 0
+  isOverTile: 0

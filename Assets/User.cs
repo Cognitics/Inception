@@ -17,15 +17,14 @@ public class User : MonoBehaviour
     private float checkForPointTimeout = 0f;
     private float rotationSensitivity = 60f;
     private float lookSensitivity = 75f;
-    private PointerEventData eventDataCurrentPosition = null;
     private Toggle toggle;
-    private List<RaycastResult> results = null;
+    private PointerEventData eventDataCurrentPosition;
     public bool newMovement;
-    private const float DETAIL_MODE_SPEEDFACTOR = .5f;
+    private const float DETAIL_MODE_SPEEDFACTOR = .02f;
 
     public float MouseSensitivity = 100.0f;
     public float TouchSensitivity = 0.04f;
-    public Button btn;
+    public GameObject toggleObject;
 
     public float NormalSpeed = 1.0f;
     public float ShiftSpeed = 10.0f;
@@ -103,40 +102,24 @@ public class User : MonoBehaviour
 
     private float rotationY = 0.0f; // rotation around the up/y axis
     private float rotationX = 0.0f; // rotation around the right/x axis
-    private YesNoDialog yesNoDialog = null;
+
+    private void Awake()
+    {
+        toggle = toggleObject.GetComponent<Toggle>();
+    }
 
     private void Start()
     {
         Input.simulateMouseWithTouches = false;
-        yesNoDialog = YesNoDialog.Instance();
-        yesNoDialog.ClosePanel();
         ModeButton = ModeButtonGameObject.GetComponent<ModeButton>();
         //StartCoroutine(SurfaceCollider_CR());
         surfaceCollider = GetComponent<Cognitics.UnityCDB.SurfaceCollider>();;
         TerrainTester = GameObject.Find("TerrainTester");
         SurfaceCollider = TerrainTester.GetComponent<Cognitics.UnityCDB.SurfaceCollider>();
-        toggle = GameObject.Find("Look").GetComponent<Toggle>();
         eventDataCurrentPosition = new PointerEventData(EventSystem.current);
-        results = new List<RaycastResult>();
     }
 
-    private void CancelQuit()
-    {
-    }
-
-    private void ConfirmQuit()
-    {
-#if UNITY_ANDROID
-            // Get the unity player activity
-            AndroidJavaObject activity = new AndroidJavaClass("com.unity3d.player.UnityPlayer").GetStatic<AndroidJavaObject>("currentActivity");
-            // call activity's boolean moveTaskToBack(boolean nonRoot) function
-            // documentation: http://developer.android.com/reference/android/app/Activity.html#moveTaskToBack(boolean)
-            activity.Call<bool>("moveTaskToBack", true);   //To suspend
-#else
-        Application.Quit();
-#endif
-    }
-    private void InitDrag()
+   private void InitDrag()
     {
         if (EventSystem.current.currentSelectedGameObject != null)
             return;
@@ -145,6 +128,7 @@ public class User : MonoBehaviour
             return;
         isDragging = true;
     }
+
     private void MoveCamera()
     {
         if (DragStart == Vector3.zero)
@@ -159,17 +143,19 @@ public class User : MonoBehaviour
         dragDelta.y = 0;
         gameObject.transform.position -= dragDelta;
     }
+
     private void FinishDrag()
     {
         isDragging = false;
     }
+
     private void LateUpdate()
     {
-        /*NEW MOVEMENT*/
-        #region
-        if (toggle.newMovement)
+        if (!IsPointerOverUIObject() || !(EventSystem.current
+            && EventSystem.current.currentSelectedGameObject
+            && EventSystem.current.currentSelectedGameObject.GetComponentInChildren<InputField>()))
         {
-            if (EventSystem.current.currentSelectedGameObject == null)
+            if (toggle.newMovement)
             {
                 float pinchAmount = 0f;
                 Quaternion desiredRotation = Quaternion.identity;
@@ -192,13 +178,13 @@ public class User : MonoBehaviour
                 if (Mathf.Abs(Cognitics.Unity.TouchInput.pinchDistanceDelta) > 0)
                     pinchAmount = Cognitics.Unity.TouchInput.pinchDistanceDelta;
 
-                if(Mathf.Abs(Cognitics.Unity.TouchInput.turnAngleDelta)> 0)
+                if (Mathf.Abs(Cognitics.Unity.TouchInput.turnAngleDelta) > 0)
                 {
                     Vector3 rotationDeg = Vector3.zero;
                     rotationDeg.y = -Cognitics.Unity.TouchInput.turnAngleDelta;
                     desiredRotation *= Quaternion.Euler(rotationDeg);
                 }
-                if(Cognitics.Unity.TouchInput.touchDirection > 0)
+                if (Cognitics.Unity.TouchInput.touchDirection > 0)
                 {
                     Vector3 angle = gameObject.transform.localEulerAngles + new Vector3(Cognitics.Unity.TouchInput.twoTouchDelta / lookSensitivity, 0, 0);
                     angle.x = Mathf.Clamp(angle.x, 10, 80);
@@ -214,17 +200,14 @@ public class User : MonoBehaviour
                 if (!Cognitics.Unity.TouchInput.checkForPoint)
                 {
                     checkForPointTimeout += Time.deltaTime;
-                    if(checkForPointTimeout >= .5f)
+                    if (checkForPointTimeout >= .5f)
                     {
                         checkForPointTimeout = 0f;
                         Cognitics.Unity.TouchInput.checkForPoint = true;
                     }
                 }
             }
-        }
-        else
-        {
-            if (!IsPointerOverUIObject())
+            else
             {
                 if (toggle.btnPressed)
                 {
@@ -239,7 +222,7 @@ public class User : MonoBehaviour
                     toggle.btnText.text = "Hold to Pan";
                     if (Input.touchCount == 1)
                         Rotate(Input.GetTouch(0));
-                    if(Input.touchCount >= 2)
+                    if (Input.touchCount >= 2)
                     {
                         Touch touch1 = Input.GetTouch(0);
                         Touch touch2 = Input.GetTouch(1);
@@ -255,42 +238,24 @@ public class User : MonoBehaviour
                     }
                 }
             }
+            if (Input.GetMouseButton(1))
+            {
+                float mouseX = Input.GetAxis("Mouse X");
+                float mouseY = -Input.GetAxis("Mouse Y");
+                rotationY += mouseX * MouseSensitivity * Time.deltaTime;
+                rotationX += mouseY * MouseSensitivity * Time.deltaTime;
+                rotationX = Mathf.Clamp(rotationX, -ClampAngle, ClampAngle);
+                transform.rotation = Quaternion.Euler(rotationX, rotationY, 0.0f);
+            }
+            if (Input.GetMouseButton(2))
+            {
+                float mouseX = Input.GetAxis("Mouse X");
+                float mouseY = -Input.GetAxis("Mouse Y");
+                transform.position += new Vector3(-SpeedFactor() * 10.0f * mouseX * Time.deltaTime, SpeedFactor() * 10.0f * mouseY * Time.deltaTime, 0.0f);
+            }
         }
 
-        #endregion
-        if (Input.GetKey(KeyCode.H))
-        {
-        }
 
-        if (Input.GetKeyUp(KeyCode.G))
-        {
-            System.GC.Collect();
-            System.GC.WaitForPendingFinalizers();
-            System.GC.Collect();
-        }
-
-
-        if (Input.GetKeyUp(KeyCode.Escape))
-        {
-            yesNoDialog.Choice("Are you sure you wish to quit?", ConfirmQuit, CancelQuit);
-            return;
-        }
-        
-        if (Input.GetMouseButton(1))
-        {
-            float mouseX = Input.GetAxis("Mouse X");
-            float mouseY = -Input.GetAxis("Mouse Y");
-            rotationY += mouseX * MouseSensitivity * Time.deltaTime;
-            rotationX += mouseY * MouseSensitivity * Time.deltaTime;
-            rotationX = Mathf.Clamp(rotationX, -ClampAngle, ClampAngle);
-            transform.rotation = Quaternion.Euler(rotationX, rotationY, 0.0f);
-        }
-        if (Input.GetMouseButton(2))
-        {
-            float mouseX = Input.GetAxis("Mouse X");
-            float mouseY = -Input.GetAxis("Mouse Y");
-            transform.position += new Vector3(-SpeedFactor() * 10.0f * mouseX * Time.deltaTime, SpeedFactor() * 10.0f * mouseY * Time.deltaTime, 0.0f);
-        }
         if (Input.GetKey(KeyCode.LeftArrow))
         {
             rotationY -= RotationSpeed * Time.deltaTime;
@@ -311,24 +276,29 @@ public class User : MonoBehaviour
             rotationX += RotationSpeed * Time.deltaTime;
             transform.rotation = Quaternion.Euler(rotationX, rotationY, 0.0f);
         }
-        if (Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.I))
-            MoveForward();
-        if (Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.K))
-            MoveBackward();
-        if (Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.J))
-            MoveLeft();
-        if (Input.GetKey(KeyCode.D) || Input.GetKey(KeyCode.L))
-            MoveRight();
-        if (Input.GetKey(KeyCode.C) || Input.GetKey(KeyCode.Space))
-            MoveUp();
-        if (Input.GetKey(KeyCode.Z))
-            MoveDown();
-        if (Input.GetKey(KeyCode.KeypadMinus))
-            MoveHigher();
-        if (Input.GetKey(KeyCode.KeypadPlus))
-            MoveLower();
-        if (Input.GetKeyDown(KeyCode.R))
-            Reset();
+        if (!(EventSystem.current
+            && EventSystem.current.currentSelectedGameObject
+            && EventSystem.current.currentSelectedGameObject.GetComponentInChildren<InputField>()))
+        {
+            if (Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.I))
+                MoveForward();
+            if (Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.K))
+                MoveBackward();
+            if (Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.J))
+                MoveLeft();
+            if (Input.GetKey(KeyCode.D) || Input.GetKey(KeyCode.L))
+                MoveRight();
+            if (Input.GetKey(KeyCode.C) || Input.GetKey(KeyCode.Space))
+                MoveUp();
+            if (Input.GetKey(KeyCode.Z))
+                MoveDown();
+            if (Input.GetKey(KeyCode.KeypadMinus))
+                MoveHigher();
+            if (Input.GetKey(KeyCode.KeypadPlus))
+                MoveLower();
+            if (Input.GetKeyDown(KeyCode.R))
+                Reset();
+        }
 
         if (surfaceCollider != null)
         {
@@ -341,7 +311,7 @@ public class User : MonoBehaviour
     private bool IsPointerOverUIObject()
     {
         eventDataCurrentPosition.position = new Vector2(Input.mousePosition.x, Input.mousePosition.y);
-        results.Clear();
+        List<RaycastResult> results = new List<RaycastResult>();
         EventSystem.current.RaycastAll(eventDataCurrentPosition, results);
         return results.Count > 0;
     }

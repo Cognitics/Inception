@@ -32,9 +32,9 @@ namespace CSJ2K.Util
 
         #region PROPERTIES
 
-        internal int Width { get; }
+        public int Width { get; }
 
-        internal int Height { get; }
+        public int Height { get; }
 
         public int NumberOfComponents { get; }
 

@@ -15,6 +15,9 @@ public class SettingsPanelScript : MonoBehaviour
     public Slider speedSlider;
     public Slider sensitivitySlider;
     public GameObject movementCheckMark;
+    public GameObject DebugConsoleButton;
+    public GameObject DebugCheckmark;
+    public GameObject DebugConsole;
 
 
     public void TouchControls()
@@ -59,6 +62,15 @@ public class SettingsPanelScript : MonoBehaviour
         {
             userObject.GetComponent<User>().MouseSensitivity = 100 * sensitivitySlider.value;
             userObject.GetComponent<User>().TouchSensitivity = (float)0.04 * sensitivitySlider.value;
+        }
+    }
+
+    public void ShowDebugConsole()
+    {
+        if(DebugConsole != null)
+        {
+            DebugCheckmark.SetActive(!DebugCheckmark.activeSelf);
+            DebugConsole.SetActive(DebugCheckmark.activeSelf);
         }
     }
 }

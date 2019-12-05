@@ -25,10 +25,12 @@ public class LODData
 
 public class ModelManager
 {
+    public Database Database = null;
     public GameObject UserObject = null;
     public List<Model> Models = new List<Model>();
+    public int ValidCount = 0;
 
-    private bool _enableLods = true; // debugging
+    private bool _enableLods = false; // debugging
     private bool _lastEnableLods = false;
 
     // stuff models in an octree to reduce the subset for distance testing
@@ -44,77 +46,6 @@ public class ModelManager
         BuildOctree(cartesianBounds);
 
         _intersectionCamera = UserObject.GetComponentInChildren<Camera>();
-        _lastEnableLods = _enableLods;
-    }
-
-    public void Run()
-    {
-        foreach (var model in Models)
-        {
-            int loading = 0;
-            if (!model.Loaded)
-            {
-                if (model.RunLoad())
-                {
-                    // Now that we have a mesh renderer, we have proper world space bounds, so we can add the model to the octree.
-                    // Only add model if it has more than one LOD. These are the models we're interested in
-                    if (model.Meshes.Count > 1)
-                        AddToOctree(model);
-
-                    // Postpone any further loading
-                    break;
-                }
-                ++loading;
-                /*
-                if (loading > 40)
-                    break;
-                    */
-            }
-
-            if (!_enableLods && _lastEnableLods)
-            {
-                // Reset to max (most detailed) lod
-                if (model.Loaded)
-                    model.SetMaxLod();
-            }
-        }
-
-        if (_enableLods)
-        {
-            // Dynamic LOD switching
-            GeometryUtility.CalculateFrustumPlanes(_intersectionCamera, planes);
-            results.Clear();
-            if (_octree.Query(planes, ref results))
-            {
-                foreach (var result in results)
-                {
-                    // Select LOD mesh based on distance
-                    int lodIndex = 0;
-                    foreach (var lod in result.Meshes)
-                    {
-                        float SwitchInDistanceSq = lod.switchInDistanceSq;
-                        float SwitchOutDistanceSq = lod.switchOutDistanceSq;
-                        float distSq = DistanceSq(result);
-                        if (distSq >= SwitchInDistanceSq && distSq < SwitchOutDistanceSq)
-                        {
-                            var meshFilter = result.GetComponent<MeshFilter>();
-                            if (result.CurrentLodIndex != lodIndex)
-                            {
-                                result.CurrentLodIndex = lodIndex;
-                                meshFilter.mesh = lod.mesh;
-                            }
-                            break;
-                        }
-                        ++lodIndex;
-                    }
-                }
-            }
-        }
-
-//#if UNITY_EDITOR
-//        _octree.Draw();
-//#endif
-
         _lastEnableLods = _enableLods;
     }
 
@@ -183,19 +114,4 @@ public class ModelManager
             model.HighlightForTag(tag);
     }
 
-    public void UpdateElevations(Database database)
-    {
-        for (int i = 0, c = Models.Count; i < c; ++i)
-        {
-            if ((Time.frameCount + i) % 10 != 0)
-                continue;
-            var model = Models[i];
-            var position = model.gameObject.transform.position;
-            var cartesianCoordinates = new CartesianCoordinates(position.x, position.z);
-            var geographicCoordinates = cartesianCoordinates.TransformedWith(database.Projection);
-            position.y = database.TerrainElevationAtLocation(geographicCoordinates);
-            model.gameObject.transform.position = position;
-        }
-    }
-        
 }

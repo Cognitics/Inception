@@ -25,6 +25,7 @@ public class ApplicationState : MonoBehaviour
 
     public GameObject UserObject = null;
     public Cognitics.UnityCDB.Database cdbDatabase = null;
+    public GameObject GlobeViewer = null;
 
     public static float SystemMemoryUtilization => System.GC.GetTotalMemory(false) / (SystemInfo.systemMemorySize * 1024f * 1024f);   // 0-1
     public static float SharedMemoryUtilization => (System.GC.GetTotalMemory(false) + (long)Texture.currentTextureMemory) / (SystemInfo.systemMemorySize * 1024f * 1024f);   // 0-1

@@ -6,6 +6,7 @@ using UnityEngine;
 using Cognitics.OpenFlight;
 using Cognitics.UnityCDB;
 using System.Threading;
+using System.Collections;
 
 public class MeshEntry
 {
@@ -172,13 +173,91 @@ public class MeshEntry
         Loaded = true;
     }
 
+    internal void GenerateMeshes(Database db)
+    {
+        db.StartCoroutine(GenerateMeshesCoroutine());
+    }
+
+
     // Create mesh with loaded flt and assign to Mesh
-    internal void GenerateMeshes()
+    public IEnumerator GenerateMeshesCoroutine()
     {
         Lods = new List<LODData>();
 
         if (Flt == null)
-            return;
+            yield break;
+
+        ////////////////////////////////////////////////////////////////////////////////
+        // this breaks LODs but makes models work for san diego
+
+        var mesh = new UnityEngine.Mesh();
+        mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+        var lod_data = new LODData { mesh = mesh };
+        Lods.Add(lod_data);
+        var submeshes = new List<Submesh>();
+        foreach (var flt_record in Flt.geometryRecords)
+        {
+            var id_record = flt_record as IdRecord;
+            var rec_submeshes = id_record.Submeshes;
+            for (int i = 0; i < rec_submeshes.Count; ++i)
+            {
+                rec_submeshes[i].triangles.Reverse();
+                rec_submeshes[i].triangles.AddRange(rec_submeshes[i].backfaceTriangles);
+            }
+            rec_submeshes.AddRange(Flt.Submeshes);
+            submeshes.AddRange(rec_submeshes);
+            yield return null;
+        }
+
+        Lods[0].mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+
+        Lods[0].mesh.vertices = vertices;
+        Lods[0].mesh.normals = normals;
+        Lods[0].mesh.uv = uvs;
+
+        if (submeshes == null)
+        {
+            Debug.LogError("[MeshManager] MeshEntry.GenerateMeshHelper() no meshes for " + Flt.Path);
+            yield break;
+        }
+
+        Lods[0].mesh.subMeshCount = submeshes.Count;
+        bool abort = false;
+        for (int i = 0; i < submeshes.Count; ++i)
+        {
+            //int texturePatternIndex = -1;     // we have to have something here or the materials won't be created correctly
+            int texturePatternIndex = 0;
+            if (submeshes[i].material != null && submeshes[i].material.mainTexturePalette != null)
+                texturePatternIndex = submeshes[i].material.mainTexturePalette.texturePatternIndex;
+            submeshToTexturePatternIndex[i] = texturePatternIndex;
+
+            for (int j = 0; j < submeshes[i].triangles.Count; ++j)
+            {
+                if (submeshes[i].triangles[j] > vertices.Length - 1)
+                {
+                    Debug.LogError("[MeshManager] MeshEntry.GenerateMeshHelper() invalid vertex index for " + Flt.Path);
+                    abort = true;
+                    break;
+                }
+            }
+            if (abort)
+                break;
+
+            Lods[0].mesh.SetTriangles(submeshes[i].triangles, i);
+            Memory += submeshes[i].triangles.Count * sizeof(int);
+
+            // Recalculate bounds if needed.
+            // NOTE: in Unity, bounds are automatically recalculated when triangles are set
+            //Lods[lodIndex].mesh.RecalculateBounds();
+
+            yield return null;
+        }
+
+
+        ////////////////////////////////////////////////////////////////////////////////
+
+        /*
+
 
         int lodIndex = 0;
         foreach (var record in Flt.geometryRecords)
@@ -222,6 +301,7 @@ public class MeshEntry
 
             GenerateMeshHelper(lodIndex++, submeshes.ToArray(), vertices, normals, uvs);
         }
+        */
 
         // Fix up switch-in distances. They should match the switch-out distances of the next highest quality LOD
         Lods[0].switchInDistanceSq = 0f;
@@ -256,7 +336,8 @@ public class MeshEntry
         bool abort = false;
         for (int i = 0; i < submeshes.Length; ++i)
         {
-            int texturePatternIndex = -1;
+            //int texturePatternIndex = -1;     // we have to have something here or the materials won't be created correctly
+            int texturePatternIndex = 0;
             if (submeshes[i].material != null && submeshes[i].material.mainTexturePalette != null)
                 texturePatternIndex = submeshes[i].material.mainTexturePalette.texturePatternIndex;
             submeshToTexturePatternIndex[i] = texturePatternIndex;
@@ -285,6 +366,7 @@ public class MeshEntry
 
 public class MeshManager
 {
+    public Database db;
     public Dictionary<string, MeshEntry> MeshByName = new Dictionary<string, MeshEntry>();
 
     public List<LODData> LodForName(string name)
@@ -300,9 +382,11 @@ public class MeshManager
             if (meshEntry.Loaded)
             {
                 // TaskLoad() completed
-                meshEntry.GenerateMeshes();
-                ++meshEntry.ReferenceCount;
-                return meshEntry.Lods;
+                meshEntry.GenerateMeshes(db);
+                return null;
+                //meshEntry.GenerateMeshes();
+                //++meshEntry.ReferenceCount;
+                //return meshEntry.Lods;
             }
             // TaskLoad in progress or failed
             return null;

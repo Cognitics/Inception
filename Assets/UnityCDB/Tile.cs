@@ -15,6 +15,9 @@ namespace Cognitics.UnityCDB
         public GeographicBounds GeographicBounds;
         private List<TileDataCache.Request> requests = new List<TileDataCache.Request>();
 
+        string MaterialName = null;
+        Cognitics.Unity.MaterialEntry MaterialEntry;
+
         Tile ParentTile;
 
         private bool isActive = false;
@@ -39,10 +42,15 @@ namespace Cognitics.UnityCDB
         public bool IsDistanceTested = false;
         public bool HasElevation = false;
         public bool HasImagery = false;
+        public bool ParentElevation = false;
+        public bool ParentImagery = false;
         public double cameraDistance = 0.0f;
+        public string QuadSN;
+        public string QuadWE;
+
+        Cognitics.Unity.WMSDownloadJob DownloadJob = null;
 
         [HideInInspector] public Vector3[] vertices;
-        //[HideInInspector] public Vector3[] normals;
         [HideInInspector] public Vector2[] uv;
         [HideInInspector] public int[] triangles;
         [HideInInspector] public Color32[] pixels;
@@ -65,10 +73,6 @@ namespace Cognitics.UnityCDB
         public int MeshDimension = 1;
 
         float MaxElevation = float.MinValue;
-
-        [HideInInspector] public CancellationTokenSource TaskInitializeToken = new CancellationTokenSource();
-        [HideInInspector] public CancellationTokenSource TaskDistanceToken = new CancellationTokenSource();
-        [HideInInspector] public CancellationTokenSource TaskLoadToken = new CancellationTokenSource();
 
         public string Name;
 
@@ -103,22 +107,24 @@ namespace Cognitics.UnityCDB
             Initialize();
         }
 
-        void Initialize()
+        /*
+        IEnumerator InitCoroutine()
         {
             // GetComponentInParent is really "get component in this or recursively upward"
             ParentTile = gameObject.transform.parent.gameObject.GetComponentInParent<Tile>();
 
+            // not sure why I am doing this conditional; Initialize is called from Start() and from Divide()
             if (vertices.Length > 0)
-                return;
+                yield break;
+
             name = CDBTile.Name;
             RasterDimension = (CDBTile.LOD < 0) ? CDBTile.LOD.RasterDimension : CDBTile.LOD.RasterDimension / 2;
             MeshDimension = RasterDimension + 1;
             if (CDBTile.LOD >= 0)
             {
-                name += " (";
-                name += (GeographicBounds.MaximumCoordinates.Latitude < CDBTile.Bounds.MaximumCoordinates.Latitude) ? "S" : "N";
-                name += (GeographicBounds.MaximumCoordinates.Longitude < CDBTile.Bounds.MaximumCoordinates.Longitude) ? "W" : "E";
-                name += ")";
+                QuadSN = (GeographicBounds.MaximumCoordinates.Latitude < CDBTile.Bounds.MaximumCoordinates.Latitude) ? "S" : "N";
+                QuadWE = (GeographicBounds.MaximumCoordinates.Longitude < CDBTile.Bounds.MaximumCoordinates.Longitude) ? "W" : "E";
+                name += " (" + QuadSN + QuadWE + ")";
             }
             Name = name;
 
@@ -128,78 +134,169 @@ namespace Cognitics.UnityCDB
             IsLoaded = false;
             IsApplied = false;
 
-            var token = TaskInitializeToken.Token;
-            Task.Run(() => { TaskInitialize(); }, token);
+            yield return null;
+
+            CDB.LOD imageryLOD = CDBTile.LOD + 1;
+            var imageryTiles = Database.DB.Tiles.Generate(GeographicBounds, imageryLOD);
+            // we should only be getting a single imagery tile
+            foreach (var imageryTile in imageryTiles)
+            {
+                bool exists = Database.DB.Imagery.YearlyVstiRepresentation.Exists(imageryTile) || Database.DB.Imagery.YearlyVstiRepresentation.AlternateExists(imageryTile);
+                if (Database.DB.Imagery.YearlyVstiRepresentation.Exists(imageryTile))
+                {
+                    MaterialName = Database.DB.Imagery.YearlyVstiRepresentation.Filename(imageryTile);
+                    MaterialEntry = Database.MaterialManager.Entry(MaterialName);
+                }
+                else
+                {
+                    // don't try to load imagery if our parent is using the grandparent imagery
+                    if (ParentTile.ParentImagery)
+                        continue;
+                    if (Database.TileDataCache.OnlineImageryServer != null)
+                    {
+                        DownloadJob = new Unity.WMSDownloadJob();
+                        DownloadJob.OnlineImageryServer = Database.TileDataCache.OnlineImageryServer;
+                        DownloadJob.OnlineImageryLayer = Database.TileDataCache.OnlineImageryLayer;
+                        DownloadJob.Width = imageryTile.RasterDimension;
+                        DownloadJob.Height = imageryTile.RasterDimension;
+                        DownloadJob.South = imageryTile.Bounds.MinimumCoordinates.Latitude;
+                        DownloadJob.North = imageryTile.Bounds.MaximumCoordinates.Latitude;
+                        DownloadJob.West = imageryTile.Bounds.MinimumCoordinates.Longitude;
+                        DownloadJob.East = imageryTile.Bounds.MaximumCoordinates.Longitude;
+                        DownloadJob.Filename = Database.DB.Imagery.YearlyVstiRepresentation.AlternateFilename(imageryTile);
+                        DownloadJob.Schedule();
+                    }
+                    else
+                    {
+                        MaterialName = ParentTile.MaterialName;
+                        MaterialEntry = Database.MaterialManager.Entry(MaterialName);
+                        ParentImagery = true;
+                    }
+                }
+                break;
+            }
+
+            yield return null;
+
+            Task.Run(() => { TaskInitialize(); });
+        }
+        */
+
+
+        void Initialize()
+        {
+            // GetComponentInParent is really "get component in this or recursively upward"
+            ParentTile = gameObject.transform.parent.gameObject.GetComponentInParent<Tile>();
+
+            if (vertices.Length > 0)
+                return;
+
+            name = CDBTile.Name;
+            RasterDimension = (CDBTile.LOD < 0) ? CDBTile.LOD.RasterDimension : CDBTile.LOD.RasterDimension / 2;
+            MeshDimension = RasterDimension + 1;
+            if (CDBTile.LOD >= 0)
+            {
+                QuadSN = (GeographicBounds.MaximumCoordinates.Latitude < CDBTile.Bounds.MaximumCoordinates.Latitude) ? "S" : "N";
+                QuadWE = (GeographicBounds.MaximumCoordinates.Longitude < CDBTile.Bounds.MaximumCoordinates.Longitude) ? "W" : "E";
+                name += " (" + QuadSN + QuadWE + ")";
+            }
+            Name = name;
+
+            //Debug.LogFormat("[{0}] INITIALIZING", Name);
+
+            IsInitialized = false;
+            IsLoaded = false;
+            IsApplied = false;
+
+            CDB.LOD imageryLOD = CDBTile.LOD + 1;
+            var imageryTiles = Database.DB.Tiles.Generate(GeographicBounds, imageryLOD);
+            // we should only be getting a single imagery tile
+            foreach (var imageryTile in imageryTiles)
+            {
+                bool exists = Database.DB.Imagery.YearlyVstiRepresentation.Exists(imageryTile) || Database.DB.Imagery.YearlyVstiRepresentation.AlternateExists(imageryTile);
+                if (Database.DB.Imagery.YearlyVstiRepresentation.Exists(imageryTile))
+                {
+                    MaterialName = Database.DB.Imagery.YearlyVstiRepresentation.Filename(imageryTile);
+                    MaterialEntry = Database.MaterialManager.Entry(MaterialName);
+                }
+                else
+                {
+                    // don't try to load imagery if our parent is using the grandparent imagery
+                    if ((ParentTile == null) || ParentTile.ParentImagery)
+                        continue;
+                    if (Database.TileDataCache.OnlineImageryServer != null)
+                    {
+                        DownloadJob = new Unity.WMSDownloadJob();
+                        DownloadJob.OnlineImageryServer = Database.TileDataCache.OnlineImageryServer;
+                        DownloadJob.OnlineImageryLayer = Database.TileDataCache.OnlineImageryLayer;
+                        DownloadJob.Width = imageryTile.RasterDimension;
+                        DownloadJob.Height = imageryTile.RasterDimension;
+                        DownloadJob.South = imageryTile.Bounds.MinimumCoordinates.Latitude;
+                        DownloadJob.North = imageryTile.Bounds.MaximumCoordinates.Latitude;
+                        DownloadJob.West = imageryTile.Bounds.MinimumCoordinates.Longitude;
+                        DownloadJob.East = imageryTile.Bounds.MaximumCoordinates.Longitude;
+                        DownloadJob.Filename = Database.DB.Imagery.YearlyVstiRepresentation.AlternateFilename(imageryTile);
+                        DownloadJob.Schedule();
+                    }
+                    else
+                    {
+                        MaterialName = ParentTile.MaterialName;
+                        MaterialEntry = Database.MaterialManager.Entry(MaterialName);
+                        ParentImagery = true;
+                    }
+                }
+            }
+
+            Task.Run(() => { TaskInitialize(); });
         }
 
         private void TaskInitialize()
         {
-            GenerateVertices();
-            GenerateTriangles();
-            GenerateUVs();
-            //GenerateNormals();
-
-            // TODO: handle geopackage
-            if (Database.GPKG != null)
-                return;
-
-
-            var primaryTerrainElevation = new TileDataCache.Request { Tile = CDBTile, Component = Database.DB.Elevation.PrimaryTerrainElevation };
-            requests.Add(primaryTerrainElevation);
-            Database.TileDataCache.RequestEntry(CDBTile, Database.DB.Elevation.PrimaryTerrainElevation);
-
-            CDB.LOD imageryLOD = CDBTile.LOD + 1;
-            var imageryTiles = Database.DB.Tiles.Generate(GeographicBounds, imageryLOD);
-            foreach (var imageryTile in imageryTiles)
+            try
             {
-                var yearlyVstiRepresentation = new TileDataCache.Request { Tile = imageryTile, Component = Database.DB.Imagery.YearlyVstiRepresentation };
-                requests.Add(yearlyVstiRepresentation);
-                Database.TileDataCache.RequestEntry(imageryTile, Database.DB.Imagery.YearlyVstiRepresentation);
-            }
+                GenerateVertices();
+                GenerateTriangles();
+                GenerateUVs();
 
-            //ApplyComponent(CDBTile, Database.DB.Elevation.PrimaryTerrainElevation);
-            //ApplyComponent(CDBTile, Database.DB.Imagery.YearlyVstiRepresentation);
+                if (Database.DB.Elevation.PrimaryTerrainElevation.Exists(CDBTile) || (Database.TileDataCache.OnlineElevationServer != null))
+                {
+                    var primaryTerrainElevation = new TileDataCache.Request { Tile = CDBTile, Component = Database.DB.Elevation.PrimaryTerrainElevation };
+                    requests.Add(primaryTerrainElevation);
+                    Database.TileDataCache.RequestEntry(CDBTile, Database.DB.Elevation.PrimaryTerrainElevation);
+                }
+                else
+                {
+                    if(ParentTile != null)
+                        ParentElevation = true;
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+            }
 
             IsInitialized = true;
         }
 
         static void DestroyTerrain(Tile tile)
         {
-            tile.meshFilter.mesh.Clear();
             tile.meshRenderer.enabled = false;
-            var materials = tile.meshRenderer.materials;
-            for (int i = 0; i < materials.Length; ++i)
-            {
-                Destroy(materials[i].mainTexture);
-                Destroy(materials[i]);
-            }
-            tile.meshRenderer.materials = new Material[0];
         }
 
         public static void DestroyTile(Tile tile)
         {
-            tile.TaskInitializeToken.Cancel();
-            tile.TaskInitializeToken.Dispose();
-            tile.TaskLoadToken.Cancel();
-            tile.TaskLoadToken.Dispose();
-            tile.TaskDistanceToken.Cancel();
-            tile.TaskDistanceToken.Dispose();
-
+            tile.Database.ActiveTiles.Remove(tile.GeographicBounds);
             DestroyTerrain(tile);
             Destroy(tile.meshFilter.mesh);
-            for (int i = 0; i < tile.meshRenderer.materials.Length; ++i)
-                Destroy(tile.meshRenderer.materials[i]);
-
+            tile.meshRenderer.material = null;
+            if(tile.MaterialName != null)
+                tile.Database.MaterialManager.Release(tile.MaterialName);
             tile.transform.SetParent(null);
             Destroy(tile.gameObject);
-
-            tile.Database.ActiveTiles.Remove(tile.GeographicBounds);
         }
 
         void Update()
         {
-            if (IsActive)
-                CullOutOfView();
             if (!IsInitialized)
                 return;
             if (IsLoading)
@@ -208,24 +305,47 @@ namespace Cognitics.UnityCDB
                 return;
             if (!IsLoaded)
             {
+                if (DownloadJob != null)
+                {
+                    if (!DownloadJob.IsCompleted)
+                        return;
+                    DownloadJob.Complete();
+                    if (System.IO.File.Exists(DownloadJob.Filename))
+                    {
+                        MaterialName = DownloadJob.Filename;
+                        MaterialEntry = Database.MaterialManager.Entry(MaterialName);
+                    }
+                    else
+                    {
+                        if (ParentTile != null)
+                        {
+                            MaterialName = ParentTile.MaterialName;
+                            MaterialEntry = Database.MaterialManager.Entry(MaterialName);
+                            ParentImagery = true;
+                        }
+                    }
+                }
                 IsLoading = true;
-                var token = TaskLoadToken.Token;
-                Task.Run(() => { TaskLoad(); }, token);
+                Task.Run(() => { TaskLoad(); });
                 return;
             }
             var childrenApplied = false;
             if (children.Count > 0)
             {
                 childrenApplied = true;
+                bool fake = true;
                 foreach (var child in children)
                 {
+                    if (!child.ParentElevation || !child.ParentImagery)
+                        fake = false;
                     if (!child.IsApplied || !child.HasElevation || !child.HasImagery)
-                    //if (!child.IsApplied)
                     {
                         childrenApplied = false;
                         child.meshRenderer.enabled = false;
                     }
                 }
+                if (fake)
+                    childrenApplied = false;
             }
             if (childrenApplied && IsActive)
             {
@@ -241,11 +361,17 @@ namespace Cognitics.UnityCDB
             }
             if (!IsApplied)
             {
+                if (Database.TileAppliedTerrain)
+                    return;
+                Database.TileAppliedTerrain = true;
                 Database.UpdateTerrain(GeographicBounds);
-                ApplyTerrain();
+                StartCoroutine(ApplyTerrain());
+                float repeatRate = (CDBTile.LOD < 1) ? 1f : CDBTile.LOD;
+                InvokeRepeating("UpdateDistance", 1f, repeatRate);
                 return;
             }
 
+            /*
             if (CheckForGrandchildren())
                 return;
 
@@ -275,6 +401,8 @@ namespace Cognitics.UnityCDB
                         divide = false;
                     if (!HasElevation)
                         divide = false;
+                    if (ParentImagery)
+                        divide = false;
                     if(divide)
                         Divide();
                 }
@@ -283,14 +411,86 @@ namespace Cognitics.UnityCDB
 
             if (IsDistanceTesting)
                 return;
-            if (Time.time - lastDistanceTest < 1f)
+            float dt = CDBTile.LOD;
+            if (dt < 1f)
+                dt = 1f;
+            if (Time.time - lastDistanceTest < dt)
                 return;
             lastDistanceTest = Time.time;
             IsDistanceTesting = true;
             IsDistanceTested = false;
 
-            var distanceToken = TaskDistanceToken.Token;
-            Task.Run(() => { TaskDistanceTest(); }, distanceToken);
+            Task.Run(() => { TaskDistanceTest(); });
+            */
+        }
+
+        void UpdateDistance()
+        {
+            bool hasGrandchildren = CheckForGrandchildren();
+            if (hasGrandchildren)
+                return;
+
+            var cartesianBounds = GeographicBounds.TransformedWith(Database.Projection);
+            float min_x = (float)cartesianBounds.MinimumCoordinates.X;
+            float max_x = (float)cartesianBounds.MaximumCoordinates.X;
+            float min_z = (float)cartesianBounds.MinimumCoordinates.Y;
+            float max_z = (float)cartesianBounds.MaximumCoordinates.Y;
+            float cam_x = Database.lastCameraPosition.x;
+            float cam_z = Database.lastCameraPosition.z;
+            float post_x = Math.Max(Math.Min(cam_x, max_x), min_x);
+            float post_z = Math.Max(Math.Min(cam_z, max_z), min_z);
+            float spacing_x = (max_x - min_x) / MeshDimension;
+            float spacing_z = (max_z - min_z) / MeshDimension;
+            int post_col = (int)Math.Floor((post_x - min_x) / spacing_x);
+            int post_row = (int)Math.Floor((post_z - min_z) / spacing_z);
+            post_col = Math.Min(post_col, MeshDimension - 1);
+            post_row = Math.Min(post_row, MeshDimension - 1);
+            int post_index = (post_row * MeshDimension) + post_col;
+            cameraDistance = Vector3.Distance(Database.lastCameraPosition, vertices[post_index]);
+            cameraDistance = Math.Min(cameraDistance, Vector3.Distance(Database.lastCameraPosition, vertices[0]));
+            cameraDistance = Math.Min(cameraDistance, Vector3.Distance(Database.lastCameraPosition, vertices[MeshDimension - 1]));
+            cameraDistance = Math.Min(cameraDistance, Vector3.Distance(Database.lastCameraPosition, vertices[vertices.Length - MeshDimension]));
+            cameraDistance = Math.Min(cameraDistance, Vector3.Distance(Database.lastCameraPosition, vertices[vertices.Length - 1]));
+            /*
+            try
+            {
+                cameraDistance = Database.DistanceForBounds(GeographicBounds);
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+            }
+            */
+
+            var lodSwitch = Database.LODSwitchByObject[Database];
+            var divideDistance = lodSwitch.EntryDistanceForLOD(CDBTile.LOD - Database.PerformanceOffsetLOD);
+            var consolidateDistance = lodSwitch.ExitDistanceForLOD(CDBTile.LOD - Database.PerformanceOffsetLOD);
+            if (children.Count > 0)
+            {
+                if (!hasGrandchildren)
+                {
+                    if (cameraDistance > consolidateDistance)
+                        Consolidate();
+                }
+            }
+            else
+            {
+                bool divide = true;
+                if (!meshRenderer.enabled)
+                    divide = false;
+                if (cameraDistance > divideDistance)
+                    divide = false;
+                if (Database.SystemMemoryLimitExceeded)
+                    divide = false;
+                if (!HasImagery)
+                    divide = false;
+                if (!HasElevation)
+                    divide = false;
+                if (ParentImagery)
+                    divide = false;
+                if (divide)
+                    Divide();
+            }
         }
 
         private void TaskLoad()
@@ -353,7 +553,6 @@ namespace Cognitics.UnityCDB
                     vertex.x = (float)(originX + (column * spacingX));
                     vertex.y = 0f;
                     vertex.z = (float)(originY + (row * spacingY));
-                    //vertices[vertexIndex] = new Vector3((float)(originX + (column * spacingX)), 0.0f, (float)(originY + (row * spacingY)));
                 }
         }
 
@@ -396,81 +595,130 @@ namespace Cognitics.UnityCDB
             }
         }
 
-        void GenerateUVs()
+        void GenerateUVs(bool quad = false, bool north = false, bool east = false)
         {
             uv = new Vector2[vertices.Length];
             int vertexIndex = 0;
+            int row_offset = north ? MeshDimension / 2 : 0;
+            int column_offset = east ? MeshDimension / 2 : 0;
             for (int row = 0; row < MeshDimension; ++row)
             {
                 for (int column = 0; column < MeshDimension; ++column, ++vertexIndex)
                 {
+                    float xnum = quad ? column_offset + (column / 2) : column;
+                    float ynum = quad ? row_offset + (row / 2) : row;
                     ref Vector2 uvv = ref uv[vertexIndex];
-                    uvv.x = (float)column / RasterDimension;
-                    uvv.y = (float)row / RasterDimension;
+                    uvv.x = xnum / RasterDimension;
+                    uvv.y = 1.0f - (ynum / RasterDimension);
                 }
             }
         }
 
-        void GenerateNormals()
+        private IEnumerator ApplyTerrain()
         {
-            /*
-            normals = new Vector3[vertices.Length];
-            for (int i = 0; i < normals.Length; ++i)
-                normals[i] = Vector3.up;
-            */
-        }
-
-        private void ApplyTerrain()
-        {
+            HasImagery = (MaterialEntry != null) && MaterialEntry.Loaded && (MaterialEntry.Material != null);
             if (!HasImagery)
-                return;
-
+                yield break;
             IsApplying = true;
 
-            var materials = new Material[0];
-            if (pixelsByTile.Count > 0)
-            {
-                materials = new Material[pixelsByTile.Count];
-                int matIndex = 0;
-                foreach (var cdbTile in pixelsByTile.Keys)
-                {
-                    var pixels = pixelsByTile[cdbTile];
-                    int textureDimension = (int)Math.Sqrt(pixels.Length);
-                    var texture = new Texture2D(textureDimension, textureDimension, TextureFormat.RGBA32, true);
-                    texture.SetPixels32(pixels);
-                    //var data = texture.GetRawTextureData<Color32>();
-                    //data.CopyFrom(pixels);
-                    texture.wrapMode = TextureWrapMode.Clamp;
-                    materials[matIndex] = new Material(Shader);
-                    materials[matIndex].mainTexture = texture;
-                    texture.Apply(true, true);
+            bool isNorthQuad = (ParentTile != null) && ParentImagery ? ParentTile.GeographicBounds.MaximumCoordinates.Latitude == GeographicBounds.MaximumCoordinates.Latitude : false;
+            bool isEastQuad = (ParentTile != null) && ParentImagery ? ParentTile.GeographicBounds.MaximumCoordinates.Longitude == GeographicBounds.MaximumCoordinates.Longitude : false;
+            GenerateUVs(ParentImagery, isNorthQuad, isEastQuad);
 
-                    ++matIndex;
-                }
-            }
+            yield return null;
 
-            meshRenderer.materials = materials;
-            //Destroy(meshFilter.mesh);
-            //meshFilter.mesh = new Mesh();
+            if (ParentElevation)
+                ApplyParentElevation();
+
+            yield return null;
+
+            meshRenderer.material = MaterialEntry.Material;
+            (meshRenderer.sharedMaterial.mainTexture as Texture2D).wrapMode = TextureWrapMode.Clamp;
+
+            yield return null;
+
             var mesh = meshFilter.mesh;
             mesh.Clear();
             mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+
+            yield return null;
+
             mesh.vertices = vertices;
+
+            yield return null;
+
             mesh.uv = uv;
-            mesh.subMeshCount = pixelsByTile.Count;
-            int materialIndex = 0;
-            foreach (var cdbTile in trianglesByTile.Keys)
-            {
-                var subtriangles = trianglesByTile[cdbTile];
-                mesh.SetTriangles(subtriangles, materialIndex);
-                ++materialIndex;
-            }
+
+            yield return null;
+
+            mesh.triangles = triangles;
+
+            yield return null;
 
             mesh.RecalculateNormals();
-            //mesh.UploadMeshData(true);
+
+            yield return null;
+
+            /*
+            if (MiniMesh == null)
+            {
+                MiniMesh = new GameObject();
+                MiniMesh.transform.SetParent(transform);
+                //MiniMesh.AddComponent<MeshRenderer>();
+                MiniMesh.AddComponent<MeshFilter>();
+            }
+            var meshSimplifier = new UnityMeshSimplifier.MeshSimplifier();
+            meshSimplifier.Initialize(mesh);
+            meshSimplifier.SimplifyMesh(0.01f);
+            meshSimplifier.PreserveBorderEdges = true;
+            MiniMesh.GetComponent<MeshFilter>().mesh = meshSimplifier.ToMesh();
+            */
+
+            yield return null;
 
             IsApplying = false;
             IsApplied = true;
+
+            //var timer = System.Diagnostics.Stopwatch.StartNew();
+            //timer.Stop();
+            //long ms = timer.ElapsedMilliseconds;
+            //Debug.LogFormat("[PERF] {0} ApplyTerrain: {1} ms", Name, ms);
+        }
+
+        GameObject MiniMesh = null;
+
+        void ApplyParentElevation()
+        {
+            HasElevation = true;
+            var parent_bounds = ParentTile.CDBTile.Bounds;
+            int parent_z_offset = (QuadSN == "S") ? 0 : MeshDimension / 2;
+            int parent_x_offset = (QuadWE == "W") ? 0 : MeshDimension / 2;
+            //Debug.LogFormat("[{0}] GENERATING ELEVATION ({1},{2})", Name, parent_x_offset, parent_z_offset);
+            var data = new float[MeshDimension * MeshDimension];
+            int i = 0;
+            for (int z = 0; z < MeshDimension; ++z)
+            {
+                for (int x = 0; x < MeshDimension; ++x, ++i)
+                {
+                    int parent_x0 = parent_x_offset + (x / 2);
+                    int parent_z0 = parent_z_offset + (z / 2);
+                    int parent_x1 = (x < MeshDimension) ? parent_x_offset + ((x + 1) / 2) : parent_x0;
+                    int parent_z1 = (z < MeshDimension) ? parent_z_offset + ((z + 1) / 2) : parent_z0;
+                    int parent_i00 = (parent_z0 * ParentTile.MeshDimension) + parent_x0;
+                    int parent_i01 = (parent_z0 * ParentTile.MeshDimension) + parent_x1;
+                    int parent_i10 = (parent_z1 * ParentTile.MeshDimension) + parent_x0;
+                    int parent_i11 = (parent_z1 * ParentTile.MeshDimension) + parent_x1;
+                    float y00 = ParentTile.vertices[parent_i00].y;
+                    float y01 = ParentTile.vertices[parent_i01].y;
+                    float y10 = ParentTile.vertices[parent_i10].y;
+                    float y11 = ParentTile.vertices[parent_i11].y;
+                    float y = (y00 + y01 + y10 + y11) / 4;
+                    vertices[i].y = y;
+                    if (y > MaxElevation)
+                        MaxElevation = y;
+                }
+            }
+            perimeter = Database.GetMeshPerimeterY(vertices, MeshDimension);
         }
 
         private double GetDistanceToNearestChild(Vector3 position)
@@ -559,36 +807,8 @@ namespace Cognitics.UnityCDB
             var primaryTerrainElevation = Database.TileDataCache.GetEntry<float[]>(cdbTile, Database.DB.Elevation.PrimaryTerrainElevation);
             if (primaryTerrainElevation == null)
                 return;
-
-            // disable elevation expansion until some bugs are worked out
             if (primaryTerrainElevation.data == null)
                 return;
-
-            if ((ParentTile != null) && (primaryTerrainElevation.data == null))
-            {
-                //Debug.LogFormat("[{0}] GENERATING ELEVATION", Name);
-                var parent_bounds = ParentTile.CDBTile.Bounds;
-                int parent_x_offset = (CDBTile.Bounds.MinimumCoordinates.Longitude == parent_bounds.MinimumCoordinates.Longitude) ? 0 : RasterDimension / 2;
-                int parent_z_offset = (CDBTile.Bounds.MinimumCoordinates.Latitude == parent_bounds.MinimumCoordinates.Latitude) ? 0 : RasterDimension / 2;
-                var data = new float[MeshDimension * MeshDimension];
-                int i = 0;
-                for (int z = 0; z < MeshDimension; ++z)
-                {
-                    for (int x = 0; x < MeshDimension; ++x, ++i)
-                    {
-                        int parent_x = parent_x_offset + (x / 2);
-                        int parent_z = parent_z_offset + (z / 2);
-                        int parent_i = (parent_z * ParentTile.MeshDimension) + parent_x;
-                        int local_i = (z * ParentTile.MeshDimension) + x;
-                        vertices[local_i].Set(vertices[local_i].x, ParentTile.vertices[parent_i].y, vertices[local_i].z);
-                        if (vertices[i].y > MaxElevation)
-                            MaxElevation = vertices[i].y;
-                    }
-                }
-                perimeter = Database.GetMeshPerimeterY(vertices, MeshDimension);
-                return;
-            }
-
             HasElevation = true;
 
             Vector3 origin = vertices[0];
@@ -601,6 +821,10 @@ namespace Cognitics.UnityCDB
 
             int xIndexOffset = (int)(tileOffset.x / xStep);
             int zIndexOffset = (int)(tileOffset.z / zStep);
+            if (xIndexOffset > 0)
+                xIndexOffset = 512;
+            if (zIndexOffset > 0)
+                zIndexOffset = 512;
 
             int xStop = xIndexOffset + MeshDimension - 1;
             int zStop = zIndexOffset + MeshDimension - 1;
@@ -696,7 +920,6 @@ namespace Cognitics.UnityCDB
 
         private void CullOutOfView()
         {
-            return;
             var planes = GeometryUtility.CalculateFrustumPlanes(Camera.main);
             if (!GeometryUtility.TestPlanesAABB(planes, meshRenderer.bounds))
             {

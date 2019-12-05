@@ -8,6 +8,7 @@ namespace Cognitics.UnityCDB
 {
     public class LODSwitch
     {
+        public float MaxDistance = 10000.0f;
         public Dictionary<int, float> EntryDistanceByLOD = new Dictionary<int, float>();
         public Dictionary<int, float> ExitDistanceByLOD = new Dictionary<int, float>();
 

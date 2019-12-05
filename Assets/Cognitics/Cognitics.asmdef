@@ -1,3 +1,14 @@
-﻿{
-	"name": "Cognitics"
+{
+    "name": "Cognitics",
+    "references": [
+        "LibTiff"
+    ],
+    "optionalUnityReferences": [],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": []
 }

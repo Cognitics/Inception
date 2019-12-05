@@ -33,22 +33,17 @@ namespace Cognitics.UnityCDB
 
         [HideInInspector] public CDB.Database DB = null;
 
-        [HideInInspector] public GeoPackage.Database GPKG = null;
-        [HideInInspector] public GeoPackage.RasterLayer GPKG_Elevation = null;
-        [HideInInspector] public GeoPackage.RasterLayer GPKG_Imagery = null;
-        TerrainTile GPKG_Terrain = null;
-
         public Dictionary<GeographicBounds, Tile> ActiveTiles = new Dictionary<GeographicBounds, Tile>();
         List<Tile> tiles = new List<Tile>();
         public TileDataCache TileDataCache = new TileDataCache();
 
         private const bool useCameraPositionTask = true; // TEMP
         private Task cameraPositionTask = null;
-        [HideInInspector] public CancellationTokenSource TaskCameraPositionToken = new CancellationTokenSource();
 
         [HideInInspector] public ModelManager ModelManager = new ModelManager();
-        [HideInInspector] public MaterialManager MaterialManager = new MaterialManager();
         [HideInInspector] public MeshManager MeshManager = new MeshManager();
+
+        [HideInInspector] public Cognitics.Unity.MaterialManager MaterialManager = null;
 
         public float SystemMemoryUtilization = 0.0f;
         public float SharedMemoryUtilization = 0.0f;
@@ -58,6 +53,9 @@ namespace Cognitics.UnityCDB
         public bool SharedMemoryLimitExceeded => SharedMemoryUtilization > SharedMemoryUtilizationLimit;
 
         public static bool isDebugBuild = false;
+
+
+        public bool TileAppliedTerrain = false;
 
         private void OnLowMemory()
         {
@@ -166,56 +164,8 @@ namespace Cognitics.UnityCDB
             return float.MaxValue;
         }
 #endif
-        /*
-        public float DistanceForBoundsGeoPackage(GeographicBounds bounds)
-        {
-            Vector3 position = lastCameraPosition;
-            var activeTiles = ActiveTilesGeoPackage();
-            var tilesToCheck = new List<QuadTreeNode>();
-
-            var cartesianBounds = bounds.TransformedWith(Projection);
-
-            // LeftLowerBound and boundsMin both provide the same data and can be refactored later. This is also true of RightUpperBound and boundsMax.
-            var LeftLowerBound = new Vector3((float)cartesianBounds.MinimumCoordinates.X, 0, (float)cartesianBounds.MinimumCoordinates.Y);
-            var RightUpperBound = new Vector3((float)cartesianBounds.MaximumCoordinates.X, 0, (float)cartesianBounds.MaximumCoordinates.Y);
-            var boundsMin = new Vector2(LeftLowerBound.x, LeftLowerBound.z);
-            var boundsMax = new Vector2(RightUpperBound.x, RightUpperBound.z);
-
-            foreach (var tile in activeTiles)
-            {
-                var tileBounds = tile.GeographicBounds.TransformedWith(Projection);
-
-                var tileBoundsMin = new Vector2((float)tileBounds.MinimumCoordinates.X, (float)tileBounds.MinimumCoordinates.Y);
-                var tileBoundsMax = new Vector2((float)tileBounds.MaximumCoordinates.X, (float)tileBounds.MaximumCoordinates.Y);
-
-                if (BoundsOverlap(tileBoundsMin, tileBoundsMax, boundsMin, boundsMax))
-                    tilesToCheck.Add(tile);
-            }
-
-            var nearestVertex = new NearestVertex();
-            float closestVertexDistance = float.MaxValue;
-
-            foreach (var tile in tilesToCheck)
-            {
-                var data = GPKG_Terrain.DataByTile[tile];
-
-                int candidateIndex = nearestVertex.GetNearestVertexIndex(position, data.vertices, LeftLowerBound, RightUpperBound);
-                float candidateDistance = Vector3.Distance(data.vertices[candidateIndex], position);
-                if (candidateDistance < closestVertexDistance)
-                    closestVertexDistance = candidateDistance;
-            }
-
-            return closestVertexDistance;
-        }
-        */
-
         public float DistanceForBounds(GeographicBounds bounds)
         {
-            /*
-            if (GPKG_Terrain != null)
-                return DistanceForBoundsGeoPackage(bounds);
-                */
-
             Vector3 position = lastCameraPosition;
             List<Tile> tilesToCheck = new List<Tile>();
 
@@ -227,9 +177,9 @@ namespace Cognitics.UnityCDB
             Vector2 boundsMin = new Vector2(LeftLowerBound.x, LeftLowerBound.z);
             Vector2 boundsMax = new Vector2(RightUpperBound.x, RightUpperBound.z);
 
-            foreach (var elem in ActiveTiles)
+            var active_tiles = new List<Tile>(ActiveTiles.Values);
+            foreach (var t in active_tiles)
             {
-                Tile t = elem.Value;
                 CartesianBounds tileBounds = t.GeographicBounds.TransformedWith(Projection);
 
                 Vector2 tileBoundsMin = new Vector2((float)tileBounds.MinimumCoordinates.X, (float)tileBounds.MinimumCoordinates.Y);
@@ -356,32 +306,6 @@ namespace Cognitics.UnityCDB
 
             if(TreeData != null)
                 DestroyGTFeatureLayer(ref TreeData);
-
-            /*
-            foreach (MeshEntry entry in MeshManager.MeshByName.Values)
-            {
-                entry.TaskLoadToken.Cancel();
-                entry.TaskLoadToken.Dispose();
-            }
-            foreach (MaterialEntry entry in MaterialManager.MaterialByName.Values)
-            {
-                entry.TaskLoadToken.Cancel();
-                entry.TaskLoadToken.Dispose();
-            }
-            */
-
-            foreach (var tile in tiles)
-            {
-                tile.TaskInitializeToken.Cancel();
-                tile.TaskInitializeToken.Dispose();
-                tile.TaskDistanceToken.Cancel();
-                tile.TaskDistanceToken.Dispose();
-                tile.TaskLoadToken.Cancel();
-                tile.TaskLoadToken.Dispose();
-            }
-
-            TaskCameraPositionToken.Cancel();
-            TaskCameraPositionToken.Dispose();
         }
 
         ~Database()
@@ -392,59 +316,19 @@ namespace Cognitics.UnityCDB
 
         public bool Exists => DB.Exists;
 
-        public void InitializeGeoPackage(string path)
-        {
-            /*
-            Path = path;
-            //DB = new CDB.Database(Path);
-            GPKG = new GeoPackage.Database(Path);
-            GPKG_Terrain = new TerrainTile(GPKG);
-            if (GPKG_Terrain.Elevation == null)
-                return;
-            if (GeographicBounds == GeographicBounds.EmptyValue)
-            {
-                GeographicBounds.MinimumCoordinates.Latitude = Math.Min(GeographicBounds.MinimumCoordinates.Latitude, GPKG_Terrain.Elevation.MinY);
-                GeographicBounds.MinimumCoordinates.Longitude = Math.Min(GeographicBounds.MinimumCoordinates.Longitude, GPKG_Terrain.Elevation.MinX);
-                GeographicBounds.MaximumCoordinates.Latitude = Math.Max(GeographicBounds.MinimumCoordinates.Latitude, GPKG_Terrain.Elevation.MaxY);
-                GeographicBounds.MaximumCoordinates.Longitude = Math.Max(GeographicBounds.MinimumCoordinates.Longitude, GPKG_Terrain.Elevation.MaxX);
-            }
-            if ((OriginLatitude == 0.0f) && (OriginLongitude == 0.0f))
-            {
-                OriginLatitude = GeographicBounds.Center.Latitude;
-                OriginLongitude = GeographicBounds.Center.Longitude;
-            }
-            Projection = new ScaledFlatEarthProjection(new GeographicCoordinates(OriginLatitude, OriginLongitude), 0.1f);
-            GPKG_Terrain.Projection = Projection;
-
-            // campbell_dem30m is 0-4
-            var lodSwitch = new LODSwitch(this);
-            lodSwitch.EntryDistanceByLOD[1] = 9999; lodSwitch.ExitDistanceByLOD[1] = 99999;
-            lodSwitch.EntryDistanceByLOD[2] = 999; lodSwitch.ExitDistanceByLOD[2] = 9999;
-            lodSwitch.EntryDistanceByLOD[3] = 99; lodSwitch.ExitDistanceByLOD[3] = 999;
-            lodSwitch.EntryDistanceByLOD[4] = 9; lodSwitch.ExitDistanceByLOD[4] = 99;
-            LODSwitchByObject[GPKG_Terrain] = lodSwitch;
-
-            {
-                var childGameObject = new GameObject();
-                childGameObject.transform.SetParent(gameObject.transform);
-                var child = childGameObject.AddComponent<QuadTree>();
-                child.Initialize(GeographicBounds);
-                child.SwitchDelegate = lodSwitch.QuadTreeSwitchUpdate;
-                child.LoadDelegate = GPKG_Terrain.QuadTreeDataLoad;
-                child.LoadedDelegate = GPKG_Terrain.QuadTreeDataLoaded;
-                child.UnloadDelegate = GPKG_Terrain.QuadTreeDataUnload;
-                child.UpdateDelegate = GPKG_Terrain.QuadTreeDataUpdate;
-                QuadTreeByObject[GPKG_Terrain] = new List<QuadTree>();
-                QuadTreeByObject[GPKG_Terrain].Add(child);
-            }
-            */
-
-        }
-
         public void Initialize()
         {
+            if(MaterialManager == null)
+                MaterialManager = gameObject.AddComponent<Cognitics.Unity.MaterialManager>();
+
             // NOTE: Debug.isDebugBuild can only be queried from main thread, so we cache it here for use in any thread
             isDebugBuild = Debug.isDebugBuild;
+
+            MeshManager.db = this;
+
+
+            //MaterialManager.Debug = true;
+
 
             Application.lowMemory += OnLowMemory;
             if (DB != null)
@@ -465,14 +349,11 @@ namespace Cognitics.UnityCDB
 
             InitLODRanges();
             SetLODBracketsForOverview();
-            //SetLODBracketsForDetail();
 
             var cartesianBounds = GeographicBounds.TransformedWith(Projection);
             Unity.TouchInput.CreateWalls(cartesianBounds);
             ModelManager.Init(cartesianBounds);
-
-            //string filepath = WriteToExternalStorage.GetAndroidExternalFilesDir();
-
+            ModelManager.Database = this;
         }
 
         void InitLODRanges()
@@ -512,8 +393,12 @@ namespace Cognitics.UnityCDB
 #if !UNITY_ANDROID
                 lods.EntryDistanceByLOD[5] = 40; lods.ExitDistanceByLOD[5] = 50;
                 lods.EntryDistanceByLOD[6] = 30; lods.ExitDistanceByLOD[6] = 40;
-                lods.EntryDistanceByLOD[7] = 20; lods.ExitDistanceByLOD[7] = 30;
-                lods.EntryDistanceByLOD[8] = 15; lods.ExitDistanceByLOD[8] = 20;
+                //lods.EntryDistanceByLOD[7] = 20; lods.ExitDistanceByLOD[7] = 30;
+                //lods.EntryDistanceByLOD[8] = 15; lods.ExitDistanceByLOD[8] = 20;
+
+                //lods.EntryDistanceByLOD[9] = 12; lods.ExitDistanceByLOD[9] = 18;
+                //lods.EntryDistanceByLOD[10] = 9; lods.ExitDistanceByLOD[10] = 15;
+                //lods.EntryDistanceByLOD[11] = 5; lods.ExitDistanceByLOD[11] = 10;
 #endif
                 LODSwitchByString["Detail"] = lods;
             }
@@ -537,8 +422,10 @@ namespace Cognitics.UnityCDB
                 lods.EntryDistanceByLOD[2] = 4000; lods.ExitDistanceByLOD[2] = 4400;
                 lods.EntryDistanceByLOD[3] = 3000; lods.ExitDistanceByLOD[3] = 3300;
                 lods.EntryDistanceByLOD[4] = 2000; lods.ExitDistanceByLOD[4] = 2200;
-                lods.EntryDistanceByLOD[5] = 1000; lods.ExitDistanceByLOD[5] = 1100;
-                lods.EntryDistanceByLOD[6] = 900; lods.ExitDistanceByLOD[6] = 910;
+
+                //lods.EntryDistanceByLOD[5] = 1000; lods.ExitDistanceByLOD[5] = 1100;
+                //lods.EntryDistanceByLOD[6] = 900; lods.ExitDistanceByLOD[6] = 910;
+
                 //lods.EntryDistanceByLOD[7] = 800; lods.ExitDistanceByLOD[6] = 1810;
                 //lods.EntryDistanceByLOD[8] = 700; lods.ExitDistanceByLOD[6] = 1710;
                 //lods.EntryDistanceByLOD[9] = 600; lods.ExitDistanceByLOD[6] = 1610;
@@ -605,16 +492,20 @@ namespace Cognitics.UnityCDB
                 if (xml.DocumentElement.Name != "LODRanges")
                     return;
                 foreach (XmlNode child in xml.DocumentElement.ChildNodes)
-                    LoadLODRange(child);
+                    LoadLODRange(child as XmlElement);
             }
             catch
             {
             }
         }
 
-        private void LoadLODRange(XmlNode node)
+        private void LoadLODRange(XmlElement node)
         {
+            if (node == null)
+                return;
             var lodSwitch = new LODSwitch(this);
+            if (node.HasAttribute("max_distance") && (float.TryParse(node.Attributes["max_distance"].Value, out float max_distance)))
+                lodSwitch.MaxDistance = max_distance;
             foreach (XmlElement child in node.ChildNodes)
             {
                 if (child.Name != "LOD")
@@ -627,7 +518,7 @@ namespace Cognitics.UnityCDB
                 float outdist = float.MaxValue;
                 if(child.HasAttribute("in") && (!float.TryParse(child.Attributes["in"].Value, out indist)))
                     indist = float.MaxValue;
-                if(child.HasAttribute("out") && (!float.TryParse(child.Attributes["out"].Value, out indist)))
+                if(child.HasAttribute("out") && (!float.TryParse(child.Attributes["out"].Value, out outdist)))
                     outdist = float.MaxValue;
                 lodSwitch.EntryDistanceByLOD[id] = indist;
                 lodSwitch.ExitDistanceByLOD[id] = outdist;
@@ -660,13 +551,9 @@ namespace Cognitics.UnityCDB
 
         void Update()
         {
+            if(Time.frameCount % 10 == 0)
+                TileAppliedTerrain = false;
             TileDataCache.Run();
-            ModelManager.Run();
-            ModelManager.UpdateElevations(this);
-
-            // TEST
-            if(Input.GetKeyDown(KeyCode.H))
-                HighlightModelByTag("test");
         }
 
         public void HighlightModelByTag(string tag) => ModelManager.HighlightForTag(tag);
@@ -740,20 +627,6 @@ namespace Cognitics.UnityCDB
 
         ////////////////////////////////////////////////////////////
 
-        public List<QuadTree> ActiveTilesGeoPackage()
-        {
-            var result = new List<QuadTree>();
-            //result.AddRange(QuadTreeByObject[GPKG_Terrain][0].ActiveTiles());
-            return result;
-        }
-
-        //public List<Tile> ActiveTiles()
-        //{
-        //    var result = new List<Tile>();
-        //    tiles.ForEach(tile => result.AddRange(tile.ActiveTiles()));
-        //    return result;
-        //}
-
         public int VertexCount()
         {
             int result = 0;
@@ -798,7 +671,7 @@ namespace Cognitics.UnityCDB
             if (useCameraPositionTask)
             {
                 if (cameraPositionTask == null)
-                    cameraPositionTask = Task.Run(() => { ApplyCameraPositionFunc(); }, TaskCameraPositionToken.Token);
+                    cameraPositionTask = Task.Run(() => { ApplyCameraPositionFunc(); });
             }
             else
             {

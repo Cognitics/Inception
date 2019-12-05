@@ -8,12 +8,15 @@ public class UIButtonScript: MonoBehaviour
     public GameObject SettingsPanel;
     public GameObject FeaturePanel;
     public GameObject POIPanel;
+    public GameObject MagePanel;
     private bool panelVisible;
     private MenuPanel mpScript;
+    private MagePanel MagePanelScript;
 
     void Start()
     {
         mpScript = MenuPanel.GetComponent<MenuPanel>();
+        MagePanelScript = MagePanel.GetComponent<MagePanel>();
     }
 
     public void MenuClick()
@@ -36,6 +39,11 @@ public class UIButtonScript: MonoBehaviour
         SetActive(POIPanel);
     }
 
+    public void MageClick()
+    {
+        SetActive(MagePanel);  
+    }
+
     public void HideChildren()
     {
         if(mpScript != null)
@@ -44,6 +52,7 @@ public class UIButtonScript: MonoBehaviour
         SettingsPanel.SetActive(false);
         FeaturePanel.SetActive(false);
         POIPanel.SetActive(false);
+        MagePanel.SetActive(false);
     }
 
     private void SetActive(GameObject obj)
