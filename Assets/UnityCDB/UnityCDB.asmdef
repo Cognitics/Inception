@@ -1,0 +1,20 @@
+{
+    "name": "UnityCDB",
+    "references": [
+        "CoordinateSystems",
+        "CDB",
+        "GeoPackage",
+        "LibTiff",
+        "libzipw",
+        "Cognitics.Unity",
+        "Cognitics"
+    ],
+    "optionalUnityReferences": [],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": []
+}

@@ -1,0 +1,20 @@
+{
+    "name": "Cognitics.Unity",
+    "references": [
+        "LibTiff",
+        "CSJ2K",
+        "CDB",
+        "GeoPackage",
+        "CoordinateSystems",
+        "libzipw",
+        "Cognitics"
+    ],
+    "optionalUnityReferences": [],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": []
+}
