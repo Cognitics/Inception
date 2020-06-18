@@ -1,0 +1,3 @@
+[submodule "Assets/Internal"]
+	path = Assets/Internal
+	url = https://svn.cognitics.net/git/Cognitics/InceptionInternal.git
