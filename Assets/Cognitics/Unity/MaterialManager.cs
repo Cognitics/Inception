@@ -2,6 +2,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Text.RegularExpressions;
 using UnityEngine;
 
@@ -15,11 +16,27 @@ namespace Cognitics.Unity
 
     public static class ResourceLoad
     {
+        public static byte[] BytesForFile(string name)
+        {
+            string path = Path.GetDirectoryName(name);
+            string fn = Path.GetFileName(name);
+            if (!path.EndsWith(".zip"))
+                return System.IO.File.ReadAllBytes(name);
+            byte[] bytes = null;
+#if (UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN || UNITY_WSA)
+            lzip.setEncoding(65001);
+#endif
+            lzip.entry2Buffer(path, fn, ref bytes);
+            return bytes;
+        }
+
+
         public static void JP2(string name, ResourceEntry re)
         {
             var entry = re as ResourceEntry_Image;
             entry.name = name;
-            entry.Image = JP2Reader.Read(name);
+            var bytes = BytesForFile(name);
+            entry.Image = JP2Reader.Parse(bytes);
             if (entry.Image == null)
                 entry.Image = new Image<Color32>();
         }
@@ -28,7 +45,8 @@ namespace Cognitics.Unity
         {
             var entry = re as ResourceEntry_Image;
             entry.name = name;
-            entry.Image = SGIReader.Read(name);
+            var bytes = BytesForFile(name);
+            entry.Image = SGIReader.Parse(bytes);
             if (entry.Image == null)
                 entry.Image = new Image<Color32>();
         }
